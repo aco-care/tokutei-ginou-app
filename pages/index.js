@@ -188,6 +188,8 @@ export default function Home() {
     await supabase.auth.signOut()
     setIsLoggedIn(false)
     setCurrentUser(null)
+    setLoginEmail('')
+    setLoginPassword('')
     setShowLogoutMessage(true)
     // 3秒後にメッセージを非表示
     setTimeout(() => setShowLogoutMessage(false), 3000)
