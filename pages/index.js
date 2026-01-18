@@ -88,6 +88,12 @@ export default function Home() {
   const [loginError, setLoginError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   
+  // 1-2: ログアウトメッセージ表示用
+  const [showLogoutMessage, setShowLogoutMessage] = useState(false)
+  
+  // 1-3: パスワードプレビュー用
+  const [showPassword, setShowPassword] = useState(false)
+  
   const [staffList, setStaffList] = useState([])
   const [facilities, setFacilities] = useState([])
   const [selectedStaffId, setSelectedStaffId] = useState(null)
@@ -167,6 +173,7 @@ export default function Home() {
       if (userData) {
         setCurrentUser(userData)
         setIsLoggedIn(true)
+        setShowLogoutMessage(false) // ログイン時にメッセージをリセット
         loadData()
       } else {
         setLoginError('ユーザー情報が見つかりません')
@@ -176,10 +183,14 @@ export default function Home() {
     }
   }
 
+  // 1-2: ログアウト表示改善
   const handleLogout = async () => {
     await supabase.auth.signOut()
     setIsLoggedIn(false)
     setCurrentUser(null)
+    setShowLogoutMessage(true)
+    // 3秒後にメッセージを非表示
+    setTimeout(() => setShowLogoutMessage(false), 3000)
   }
 
   const loadData = async () => {
@@ -488,6 +499,12 @@ export default function Home() {
   const archivedStaff = staffList.filter(s => s.status === 'archived')
   const selectedStaff = staffList.find(s => s.id === selectedStaffId)
 
+  // 1-4: ホームボタン - ダッシュボードに戻る関数
+  const goToDashboard = () => {
+    setActiveTab('dashboard')
+    setSelectedStaffId(null)
+  }
+
   // ローディング画面
   if (isLoading) {
     return (
@@ -506,13 +523,27 @@ export default function Home() {
       <>
         <Head>
           <title>ログイン | 特定技能 受入れ管理システム</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+          <meta name="theme-color" content="#0f172a" />
+          <link rel="manifest" href="/manifest.json" />
+          <link rel="apple-touch-icon" href="/icon-192.png" />
         </Head>
         <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
-          <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl p-8 w-full max-w-md">
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-3xl mx-auto mb-4">🏥</div>
-              <h1 className="text-2xl font-bold text-white">特定技能 受入れ管理</h1>
-              <p className="text-slate-400 mt-2">介護分野</p>
+          {/* 1-2: ログアウトメッセージ */}
+          {showLogoutMessage && (
+            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 animate-fadeIn">
+              <div className="bg-teal-500/20 border border-teal-500/50 text-teal-400 px-6 py-3 rounded-xl backdrop-blur-sm flex items-center gap-2">
+                <span className="text-lg">✓</span>
+                <span>ログアウトしました</span>
+              </div>
+            </div>
+          )}
+          
+          <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl p-6 sm:p-8 w-full max-w-md">
+            <div className="text-center mb-6 sm:mb-8">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-2xl sm:text-3xl mx-auto mb-4">🏥</div>
+              <h1 className="text-xl sm:text-2xl font-bold text-white">特定技能 受入れ管理</h1>
+              <p className="text-slate-400 mt-2 text-sm sm:text-base">介護分野</p>
             </div>
             
             <form onSubmit={handleLogin} className="space-y-4">
@@ -522,21 +553,43 @@ export default function Home() {
                   type="email"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                  className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white text-base focus:border-teal-500 focus:outline-none"
                   placeholder="your@email.com"
                   required
+                  autoComplete="email"
                 />
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">パスワード</label>
-                <input
-                  type="password"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
-                  placeholder="••••••••"
-                  required
-                />
+                {/* 1-3: パスワードプレビュー */}
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    className="w-full px-4 py-3 pr-12 rounded-lg bg-slate-900 border border-slate-700 text-white text-base focus:border-teal-500 focus:outline-none"
+                    placeholder="••••••••"
+                    required
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                    aria-label={showPassword ? 'パスワードを隠す' : 'パスワードを表示'}
+                  >
+                    {showPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               
               {loginError && (
@@ -547,13 +600,13 @@ export default function Home() {
               
               <button
                 type="submit"
-                className="w-full py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold hover:shadow-lg hover:shadow-teal-500/30 transition-all"
+                className="w-full py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold hover:shadow-lg hover:shadow-teal-500/30 transition-all active:scale-[0.98]"
               >
                 ログイン
               </button>
             </form>
             
-            <p className="text-center text-slate-500 text-sm mt-6">
+            <p className="text-center text-slate-500 text-xs sm:text-sm mt-6">
               アカウントは管理者にお問い合わせください
             </p>
           </div>
@@ -567,50 +620,62 @@ export default function Home() {
     <>
       <Head>
         <title>特定技能 受入れ管理システム</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+        <meta name="theme-color" content="#0f172a" />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
       </Head>
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100">
-        {/* ヘッダー */}
+        {/* ヘッダー - 1-1: スマホ対応改善 */}
         <header className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800">
-          <div className="max-w-7xl mx-auto px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-xl">🏥</div>
+          <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+            <div className="flex items-center justify-between gap-2">
+              {/* 1-4: ホームボタン（ロゴクリックでダッシュボードへ） */}
+              <button 
+                onClick={goToDashboard}
+                className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity flex-shrink-0"
+              >
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-lg sm:text-xl">🏥</div>
                 <div className="hidden sm:block">
-                  <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-400">特定技能 受入れ管理</h1>
+                  <h1 className="text-base sm:text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-400">特定技能 受入れ管理</h1>
                   <p className="text-xs text-slate-500">介護分野</p>
                 </div>
-              </div>
+              </button>
               
-              <div className="flex items-center gap-2 sm:gap-4">
-                <nav className="flex gap-1 overflow-x-auto">
+              <div className="flex items-center gap-1 sm:gap-4 flex-1 justify-end">
+                {/* 1-1: スマホ対応 - ナビゲーション改善 */}
+                <nav className="flex gap-0.5 sm:gap-1 overflow-x-auto scrollbar-hide">
                   {[
-                    { id: 'dashboard', icon: '📊', label: 'ダッシュボード' },
+                    { id: 'dashboard', icon: '📊', label: 'ホーム' },
                     { id: 'staff', icon: '👥', label: 'スタッフ' },
-                    { id: 'logs', icon: '📜', label: '操作履歴' },
-                    { id: 'feedback', icon: '💬', label: 'フィードバック' },
+                    { id: 'logs', icon: '📜', label: '履歴' },
+                    { id: 'feedback', icon: '💬', label: '意見' },
                   ].map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => { setActiveTab(tab.id); setSelectedStaffId(null) }}
-                      className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg transition-all whitespace-nowrap ${
+                      className={`flex items-center gap-1 px-2 sm:px-3 py-2 rounded-lg transition-all whitespace-nowrap min-w-0 ${
                         activeTab === tab.id
                           ? 'bg-gradient-to-br from-teal-500 to-emerald-600 text-white'
                           : 'text-slate-400 hover:text-white hover:bg-slate-800'
                       }`}
                     >
-                      <span>{tab.icon}</span>
-                      <span className="text-xs sm:text-sm hidden sm:inline">{tab.label}</span>
+                      <span className="text-base sm:text-lg">{tab.icon}</span>
+                      <span className="text-xs sm:text-sm hidden xs:inline">{tab.label}</span>
                     </button>
                   ))}
                 </nav>
                 
-                <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-slate-700">
-                  <div className="text-right hidden sm:block">
+                <div className="flex items-center gap-1 sm:gap-3 pl-1 sm:pl-4 border-l border-slate-700 flex-shrink-0">
+                  <div className="text-right hidden md:block">
                     <p className="text-sm font-medium text-slate-200">{currentUser?.name}</p>
-                    <p className="text-xs text-slate-500">{currentUser?.role === 'owner' ? 'オーナー' : currentUser?.role === 'admin' ? '管理者' : '事務員'}</p>
+                    <p className="text-xs text-slate-500">{currentUser?.role === 'owner' ? '責任者' : currentUser?.role === 'admin' ? '担当者' : '確認者'}</p>
                   </div>
-                  <button onClick={handleLogout} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all">
+                  <button 
+                    onClick={handleLogout} 
+                    className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
+                    aria-label="ログアウト"
+                  >
                     🚪
                   </button>
                 </div>
@@ -619,54 +684,55 @@ export default function Home() {
           </div>
         </header>
 
-        <main className="max-w-7xl mx-auto px-4 py-6">
+        <main className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
           {/* ダッシュボード */}
           {activeTab === 'dashboard' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-                <div className="bg-gradient-to-br from-teal-500/20 to-teal-600/10 border border-teal-500/30 rounded-2xl p-4 sm:p-5">
+            <div className="space-y-4 sm:space-y-6 animate-fadeIn">
+              {/* 1-1: スマホ対応 - グリッド改善 */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+                <div className="bg-gradient-to-br from-teal-500/20 to-teal-600/10 border border-teal-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
                   <div className="text-2xl sm:text-3xl font-bold text-teal-400">{activeStaff.length}</div>
                   <div className="text-xs sm:text-sm text-slate-400 mt-1">在籍人数</div>
                 </div>
-                <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5">
+                <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
                   <div className="text-2xl sm:text-3xl font-bold text-amber-400">
                     {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90 && getDaysUntil(s.residence_expiry) > 0).length}
                   </div>
                   <div className="text-xs sm:text-sm text-slate-400 mt-1">更新期限90日以内</div>
                 </div>
-                <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/30 rounded-2xl p-4 sm:p-5">
+                <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
                   <div className="text-2xl sm:text-3xl font-bold text-purple-400">{activeStaff.filter(s => s.visit_care_ready).length}</div>
                   <div className="text-xs sm:text-sm text-slate-400 mt-1">訪問系対応可</div>
                 </div>
-                <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-2xl p-4 sm:p-5">
+                <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
                   <div className="text-2xl sm:text-3xl font-bold text-rose-400">{activeStaff.filter(s => s.status === 'exiting').length}</div>
                   <div className="text-xs sm:text-sm text-slate-400 mt-1">退職手続き中</div>
                 </div>
               </div>
 
-              <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
-                <h2 className="text-lg font-bold mb-4">⚠️ 対応が必要なスタッフ</h2>
-                <div className="space-y-3">
+              <div className="bg-slate-800/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">⚠️ 対応が必要なスタッフ</h2>
+                <div className="space-y-2 sm:space-y-3">
                   {activeStaff
                     .filter(s => getDaysUntil(s.residence_expiry) <= 90)
                     .map(staff => (
                       <div
                         key={staff.id}
                         onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
-                        className="flex items-center justify-between p-3 sm:p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl cursor-pointer hover:bg-amber-500/20 transition-all"
+                        className="flex items-center justify-between p-3 sm:p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl cursor-pointer hover:bg-amber-500/20 transition-all active:scale-[0.99]"
                       >
-                        <div>
-                          <p className="font-semibold text-white">{staff.name}</p>
-                          <p className="text-xs sm:text-sm text-slate-400">{getFacilityName(staff.facility_id)}</p>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-white text-sm sm:text-base truncate">{staff.name}</p>
+                          <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(staff.facility_id)}</p>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right flex-shrink-0 ml-2">
                           <p className="text-amber-400 font-semibold text-sm sm:text-base">残{getDaysUntil(staff.residence_expiry)}日</p>
                           <p className="text-xs text-slate-500">{staff.residence_expiry}</p>
                         </div>
                       </div>
                     ))}
                   {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90).length === 0 && (
-                    <p className="text-slate-500 text-center py-4">現在、緊急の対応事項はありません</p>
+                    <p className="text-slate-500 text-center py-4 text-sm sm:text-base">現在、緊急の対応事項はありません</p>
                   )}
                 </div>
               </div>
@@ -741,9 +807,15 @@ export default function Home() {
           {activeTab === 'staffDetail' && selectedStaff && (
             <div className="space-y-6 animate-fadeIn">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-                <button onClick={() => setActiveTab('staff')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
-                  ← 戻る
-                </button>
+                {/* 1-4: ホームボタン追加 */}
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <button onClick={() => setActiveTab('staff')} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
+                    ← 戻る
+                  </button>
+                  <button onClick={goToDashboard} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white sm:hidden">
+                    🏠
+                  </button>
+                </div>
                 <div className="flex-1">
                   <h2 className="text-xl sm:text-2xl font-bold">{selectedStaff.name}</h2>
                   <p className="text-slate-400">{getFacilityName(selectedStaff.facility_id)}</p>
@@ -1134,14 +1206,47 @@ export default function Home() {
         .animate-fadeIn {
           animation: fadeIn 0.3s ease-out;
         }
-        /* iOS/Android用の日付入力の改善 */
+        
+        /* 1-5: カレンダーアイコン視認性改善（ダークモード対応） */
         input[type="date"] {
           -webkit-appearance: none;
           min-height: 48px;
+          color-scheme: dark;
         }
         input[type="date"]::-webkit-calendar-picker-indicator {
-          filter: invert(1);
+          filter: invert(0.8) sepia(1) saturate(5) hue-rotate(140deg);
           cursor: pointer;
+          padding: 4px;
+          border-radius: 4px;
+          transition: all 0.2s;
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator:hover {
+          filter: invert(0.9) sepia(1) saturate(5) hue-rotate(140deg);
+          background-color: rgba(45, 212, 191, 0.2);
+        }
+        
+        /* スクロールバー非表示 */
+        .scrollbar-hide {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+        }
+        
+        /* 1-1: スマホ用ブレークポイント追加 */
+        @media (min-width: 480px) {
+          .xs\\:inline {
+            display: inline !important;
+          }
+        }
+        
+        /* タッチデバイス用のアクティブ状態改善 */
+        @media (hover: none) {
+          button:active,
+          .cursor-pointer:active {
+            transform: scale(0.98);
+          }
         }
       `}</style>
     </>
