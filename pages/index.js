@@ -2,10 +2,24 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import Head from 'next/head'
 
-// チェックリスト定義
+// 国籍リスト（フェーズ2: 国籍マスタ管理）
+const defaultNationalities = [
+  'ネパール', 'ベトナム', 'フィリピン', 'インドネシア', 'ミャンマー',
+  'カンボジア', 'タイ', '中国', 'モンゴル', 'スリランカ', 'バングラデシュ'
+]
+
+// 資格リスト（フェーズ2: 資格取得状況管理）
+const qualificationTypes = [
+  { id: 'shoninsya', name: '初任者研修', required_for_visit: true },
+  { id: 'jitsumukensyu', name: '実務者研修', required_for_visit: false },
+  { id: 'kaigofukushishi', name: '介護福祉士', required_for_visit: false },
+]
+
+// チェックリスト定義（フェーズ5: 一度きり項目のロック対応）
 const checklistDefinitions = {
   preparation: {
     title: '受入れ準備', icon: '📋',
+    lockOnComplete: true, // 一度きり項目：完了後ロック
     items: [
       { id: 'p1', text: '外国人材の資格要件を確認した' },
       { id: 'p2', text: '協議会に入会申請した' },
@@ -20,6 +34,7 @@ const checklistDefinitions = {
   },
   entry: {
     title: '入社時届出', icon: '🚀',
+    lockOnComplete: true, // 一度きり項目：完了後ロック
     items: [
       { id: 'e1', text: '入管への届出を行った' },
       { id: 'e2', text: '協議会への登録を行った' },
@@ -32,6 +47,7 @@ const checklistDefinitions = {
   },
   ongoing: {
     title: '在籍中（定期）', icon: '📅',
+    lockOnComplete: false, // 定期的な項目：ロックしない
     items: [
       { id: 'o1', text: '定期面談を実施した（3ヶ月に1回）' },
       { id: 'o2', text: '定期届出を行った（年1回：4〜5月）' },
@@ -41,6 +57,7 @@ const checklistDefinitions = {
   },
   renewal: {
     title: '在留期間更新', icon: '🔄',
+    lockOnComplete: false, // 複数回実施可能
     items: [
       { id: 'r1', text: '在留期限を確認した' },
       { id: 'r2', text: '協議会証明書の期限を確認した' },
@@ -51,6 +68,7 @@ const checklistDefinitions = {
   },
   visitCare: {
     title: '訪問系サービス従事', icon: '🏠',
+    lockOnComplete: true, // 一度きり項目
     items: [
       { id: 'v1', text: '初任者研修を修了している' },
       { id: 'v2', text: '実務経験1年以上ある' },
@@ -68,6 +86,7 @@ const checklistDefinitions = {
   },
   exit: {
     title: '退職手続き', icon: '👋',
+    lockOnComplete: true, // 一度きり項目
     items: [
       { id: 'x1', text: '退職日を確定した' },
       { id: 'x2', text: '入管へ届出した（14日以内）' },
@@ -104,13 +123,21 @@ export default function Home() {
   
   const [interviews, setInterviews] = useState([])
   const [showAddInterview, setShowAddInterview] = useState(false)
-  const [newInterview, setNewInterview] = useState({ date: '', content: '', next_actions: '' })
+  const [newInterview, setNewInterview] = useState({
+    date: '',
+    content: '',
+    next_actions: '',
+    interview_type: 'regular', // フェーズ6: 面談種類
+    supervisor_interview: false // 監督者面談も同時記録
+  })
   
   // チェックリスト関連
   const [staffChecklists, setStaffChecklists] = useState({})
   const [expandedPhase, setExpandedPhase] = useState(null)
   const [checklistEditMode, setChecklistEditMode] = useState(false)
   const [pendingChecklistChanges, setPendingChecklistChanges] = useState({})
+  // フェーズ5: 個別フェーズ編集モード
+  const [editingPhase, setEditingPhase] = useState(null)
   
   const [activityLogs, setActivityLogs] = useState([])
   const [feedbackContent, setFeedbackContent] = useState('')
@@ -120,9 +147,52 @@ export default function Home() {
   const [staffMemo, setStaffMemo] = useState('')
   const [memoEditMode, setMemoEditMode] = useState(false)
 
+  // フェーズ2: スタッフ編集モード
+  const [showEditStaff, setShowEditStaff] = useState(false)
+  const [editingStaff, setEditingStaff] = useState(null)
+
+  // フェーズ2: 事業所管理
+  const [showFacilityManager, setShowFacilityManager] = useState(false)
+  const [newFacilityName, setNewFacilityName] = useState('')
+  const [newFacilityAddress, setNewFacilityAddress] = useState('')
+
+  // フェーズ2: 国籍管理
+  const [nationalities, setNationalities] = useState(defaultNationalities)
+  const [showNationalityManager, setShowNationalityManager] = useState(false)
+  const [newNationality, setNewNationality] = useState('')
+
+  // フェーズ2: 在留期限更新履歴
+  const [residenceHistory, setResidenceHistory] = useState([])
+  const [showResidenceUpdate, setShowResidenceUpdate] = useState(false)
+  const [newResidenceExpiry, setNewResidenceExpiry] = useState('')
+
+  // フェーズ2: 資格取得状況
+  const [staffQualifications, setStaffQualifications] = useState({})
+
+  // フェーズ4: メンバー管理
+  const [showMemberManager, setShowMemberManager] = useState(false)
+  const [members, setMembers] = useState([])
+  const [showInviteMember, setShowInviteMember] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteName, setInviteName] = useState('')
+  const [inviteRole, setInviteRole] = useState('staff')
+
+  // フェーズ7: ヘルプ・チャット相談
+  const [helpStep, setHelpStep] = useState('main') // main, procedure, manual
+  const [selectedProcedure, setSelectedProcedure] = useState(null)
+  const [selectedProcedureStaff, setSelectedProcedureStaff] = useState(null)
+
+  // フェーズ7: 連絡先管理
+  const [contacts, setContacts] = useState([
+    { id: 1, name: '行政書士 山田事務所', role: '行政書士', phone: '03-1234-5678', email: 'yamada@example.com', note: '在留資格関連' },
+    { id: 2, name: '社会保険労務士 佐藤事務所', role: '社労士', phone: '03-2345-6789', email: 'sato@example.com', note: '労務・社保関連' },
+  ])
+  const [showContactManager, setShowContactManager] = useState(false)
+  const [newContact, setNewContact] = useState({ name: '', role: '', phone: '', email: '', note: '' })
+
   const [newStaff, setNewStaff] = useState({
     name: '', name_kana: '', nationality: 'ネパール',
-    entry_date: '', facility_id: ''
+    entry_date: '', facility_id: '', facility_ids: []
   })
 
   // 初期化・認証チェック
@@ -216,6 +286,13 @@ export default function Home() {
       .order('created_at', { ascending: false })
       .limit(50)
     if (logData) setActivityLogs(logData)
+
+    // フェーズ4: メンバー一覧
+    const { data: memberData } = await supabase
+      .from('users')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (memberData) setMembers(memberData)
   }
 
   // スタッフ選択時に面談記録とチェックリストを読み込み
@@ -257,6 +334,32 @@ export default function Home() {
     // スタッフメモ
     const staff = staffList.find(s => s.id === staffId)
     setStaffMemo(staff?.memo || '')
+
+    // フェーズ2: 在留期限更新履歴
+    const { data: historyData } = await supabase
+      .from('residence_history')
+      .select('*')
+      .eq('staff_id', staffId)
+      .order('created_at', { ascending: false })
+    if (historyData) setResidenceHistory(historyData)
+
+    // フェーズ2: 資格取得状況
+    const { data: qualData } = await supabase
+      .from('staff_qualifications')
+      .select('*')
+      .eq('staff_id', staffId)
+    if (qualData) {
+      const qualMap = {}
+      qualData.forEach(q => {
+        qualMap[q.qualification_id] = {
+          acquired: q.acquired,
+          acquired_date: q.acquired_date
+        }
+      })
+      setStaffQualifications(qualMap)
+    } else {
+      setStaffQualifications({})
+    }
   }
 
   // 操作ログ記録
@@ -287,31 +390,242 @@ export default function Home() {
       alert('氏名と入社日は必須です')
       return
     }
-    
+
     const entryDate = new Date(newStaff.entry_date)
     const residenceExpiry = new Date(entryDate)
     residenceExpiry.setFullYear(residenceExpiry.getFullYear() + 1)
-    
+
     const staffData = {
-      ...newStaff,
+      name: newStaff.name,
+      name_kana: newStaff.name_kana,
+      nationality: newStaff.nationality,
+      entry_date: newStaff.entry_date,
+      facility_id: newStaff.facility_id,
+      facility_ids: newStaff.facility_ids || [],
       residence_expiry: residenceExpiry.toISOString().split('T')[0],
       status: 'active',
       current_phase: 'preparation'
     }
-    
+
     const { data, error } = await supabase.from('foreign_staff').insert(staffData).select()
-    
+
     if (error) {
       alert('エラー: ' + error.message)
       return
     }
-    
+
     if (data) {
       await logActivity('create', 'foreign_staff', data[0].id, newStaff.name, null, staffData, `${newStaff.name}さんを追加`)
       loadData()
       setShowAddStaff(false)
-      setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '' })
+      setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '', facility_ids: [] })
     }
+  }
+
+  // フェーズ2: スタッフ編集
+  const handleEditStaff = async () => {
+    if (!editingStaff?.name || !editingStaff?.entry_date) {
+      alert('氏名と入社日は必須です')
+      return
+    }
+
+    const oldStaff = staffList.find(s => s.id === editingStaff.id)
+
+    const { error } = await supabase
+      .from('foreign_staff')
+      .update({
+        name: editingStaff.name,
+        name_kana: editingStaff.name_kana,
+        nationality: editingStaff.nationality,
+        entry_date: editingStaff.entry_date,
+        facility_id: editingStaff.facility_id,
+        facility_ids: editingStaff.facility_ids || [],
+        visit_care_ready: editingStaff.visit_care_ready
+      })
+      .eq('id', editingStaff.id)
+
+    if (error) {
+      alert('エラー: ' + error.message)
+      return
+    }
+
+    await logActivity('update', 'foreign_staff', editingStaff.id, editingStaff.name, oldStaff, editingStaff, `${editingStaff.name}さんの情報を更新`)
+    loadData()
+    setShowEditStaff(false)
+    setEditingStaff(null)
+  }
+
+  // フェーズ2: 事業所追加
+  const handleAddFacility = async () => {
+    if (!newFacilityName.trim()) {
+      alert('事業所名を入力してください')
+      return
+    }
+
+    const { data, error } = await supabase.from('facilities').insert({
+      name: newFacilityName,
+      address: newFacilityAddress
+    }).select()
+
+    if (error) {
+      alert('エラー: ' + error.message)
+      return
+    }
+
+    if (data) {
+      await logActivity('create', 'facilities', data[0].id, newFacilityName, null, { name: newFacilityName }, `事業所「${newFacilityName}」を追加`)
+      loadData()
+      setNewFacilityName('')
+      setNewFacilityAddress('')
+    }
+  }
+
+  // フェーズ2: 国籍追加
+  const handleAddNationality = () => {
+    if (!newNationality.trim()) return
+    if (nationalities.includes(newNationality)) {
+      alert('この国籍は既に登録されています')
+      return
+    }
+    setNationalities([...nationalities, newNationality])
+    setNewNationality('')
+  }
+
+  // フェーズ2: 在留期限更新
+  const handleUpdateResidenceExpiry = async () => {
+    if (!newResidenceExpiry) {
+      alert('新しい在留期限を入力してください')
+      return
+    }
+
+    const staff = staffList.find(s => s.id === selectedStaffId)
+    const oldExpiry = staff?.residence_expiry
+
+    // 履歴に保存
+    await supabase.from('residence_history').insert({
+      staff_id: selectedStaffId,
+      old_expiry: oldExpiry,
+      new_expiry: newResidenceExpiry,
+      updated_by: currentUser?.id,
+      updated_by_name: currentUser?.name
+    })
+
+    // スタッフ情報を更新
+    await supabase
+      .from('foreign_staff')
+      .update({ residence_expiry: newResidenceExpiry })
+      .eq('id', selectedStaffId)
+
+    await logActivity('update', 'foreign_staff', selectedStaffId, staff?.name, { residence_expiry: oldExpiry }, { residence_expiry: newResidenceExpiry }, `${staff?.name}さんの在留期限を更新`)
+
+    loadData()
+    loadStaffDetails(selectedStaffId)
+    setShowResidenceUpdate(false)
+    setNewResidenceExpiry('')
+  }
+
+  // フェーズ2: 資格取得状況の更新
+  const handleQualificationToggle = async (qualId, acquired, acquiredDate = null) => {
+    const staff = staffList.find(s => s.id === selectedStaffId)
+
+    const existing = staffQualifications[qualId]
+
+    if (existing) {
+      await supabase
+        .from('staff_qualifications')
+        .update({
+          acquired,
+          acquired_date: acquired ? (acquiredDate || new Date().toISOString().split('T')[0]) : null
+        })
+        .eq('staff_id', selectedStaffId)
+        .eq('qualification_id', qualId)
+    } else {
+      await supabase.from('staff_qualifications').insert({
+        staff_id: selectedStaffId,
+        qualification_id: qualId,
+        acquired,
+        acquired_date: acquired ? (acquiredDate || new Date().toISOString().split('T')[0]) : null
+      })
+    }
+
+    // 初任者研修を取得した場合、訪問系対応可を確認
+    if (qualId === 'shoninsya' && acquired) {
+      const staff = staffList.find(s => s.id === selectedStaffId)
+      const entryDate = new Date(staff?.entry_date)
+      const oneYearAgo = new Date()
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+
+      if (entryDate <= oneYearAgo) {
+        await supabase
+          .from('foreign_staff')
+          .update({ visit_care_ready: true })
+          .eq('id', selectedStaffId)
+        loadData()
+      }
+    }
+
+    await logActivity('update', 'staff_qualifications', selectedStaffId, staff?.name, null, { qualification: qualId, acquired }, `${staff?.name}さんの資格情報を更新`)
+
+    loadStaffDetails(selectedStaffId)
+  }
+
+  // フェーズ4: メンバー招待（※実際のメール送信はSupabaseの設定が必要）
+  const handleInviteMember = async () => {
+    if (!inviteEmail || !inviteName) {
+      alert('メールアドレスと名前は必須です')
+      return
+    }
+
+    // Note: 実際のメンバー招待にはSupabase Auth Admin APIが必要
+    // ここではユーザーテーブルに仮登録する形で実装
+    const { data, error } = await supabase.from('users').insert({
+      email: inviteEmail,
+      name: inviteName,
+      role: inviteRole,
+      status: 'pending' // 招待中
+    }).select()
+
+    if (error) {
+      alert('エラー: ' + error.message)
+      return
+    }
+
+    await logActivity('create', 'users', data[0].id, inviteName, null, { email: inviteEmail, role: inviteRole }, `${inviteName}さんを招待`)
+    loadData()
+    setShowInviteMember(false)
+    setInviteEmail('')
+    setInviteName('')
+    setInviteRole('staff')
+  }
+
+  // フェーズ4: メンバーの権限変更
+  const handleChangeRole = async (memberId, newRole) => {
+    const member = members.find(m => m.id === memberId)
+    if (!member) return
+
+    await supabase
+      .from('users')
+      .update({ role: newRole })
+      .eq('id', memberId)
+
+    await logActivity('update', 'users', memberId, member.name, { role: member.role }, { role: newRole }, `${member.name}さんの権限を${newRole}に変更`)
+    loadData()
+  }
+
+  // フェーズ4: アカウント無効化/有効化
+  const handleToggleAccountStatus = async (memberId) => {
+    const member = members.find(m => m.id === memberId)
+    if (!member) return
+
+    const newStatus = member.status === 'active' ? 'disabled' : 'active'
+
+    await supabase
+      .from('users')
+      .update({ status: newStatus })
+      .eq('id', memberId)
+
+    await logActivity('update', 'users', memberId, member.name, { status: member.status }, { status: newStatus }, `${member.name}さんのアカウントを${newStatus === 'active' ? '有効化' : '無効化'}`)
+    loadData()
   }
 
   // 面談記録追加
@@ -320,24 +634,32 @@ export default function Home() {
       alert('面談日と内容は必須です')
       return
     }
-    
+
     const interviewData = {
       staff_id: selectedStaffId,
       interview_date: newInterview.date,
       content: newInterview.content,
       next_actions: newInterview.next_actions,
+      interview_type: newInterview.interview_type,
+      supervisor_interview: newInterview.supervisor_interview,
       interviewer_id: currentUser?.id,
       created_by: currentUser?.id
     }
-    
+
     const { error } = await supabase.from('interviews').insert(interviewData)
-    
+
     if (!error) {
       const staff = staffList.find(s => s.id === selectedStaffId)
-      await logActivity('create', 'interviews', selectedStaffId, staff?.name, null, interviewData, `${staff?.name}さんの面談記録を追加`)
+      const typeLabel = {
+        regular: '定期面談',
+        renewal: '更新時面談',
+        exit: '退職時面談',
+        other: '面談'
+      }[newInterview.interview_type]
+      await logActivity('create', 'interviews', selectedStaffId, staff?.name, null, interviewData, `${staff?.name}さんの${typeLabel}記録を追加`)
       loadStaffDetails(selectedStaffId)
       setShowAddInterview(false)
-      setNewInterview({ date: '', content: '', next_actions: '' })
+      setNewInterview({ date: '', content: '', next_actions: '', interview_type: 'regular', supervisor_interview: false })
     }
   }
 
@@ -470,6 +792,33 @@ export default function Home() {
   const getFacilityName = (facilityId) => {
     const facility = facilities.find(f => f.id === facilityId)
     return facility?.name || '未設定'
+  }
+
+  // フェーズ3: 次回面談日の計算（入社日から3ヶ月ごと）
+  const getNextInterviewDate = (staff) => {
+    if (!staff.entry_date) return null
+    const entryDate = new Date(staff.entry_date)
+    const now = new Date()
+    let nextInterview = new Date(entryDate)
+
+    // 入社日から3ヶ月ごとの面談日を計算
+    while (nextInterview <= now) {
+      nextInterview.setMonth(nextInterview.getMonth() + 3)
+    }
+
+    // 次の面談日が30日以内なら表示
+    const daysUntilInterview = Math.ceil((nextInterview - now) / (1000 * 60 * 60 * 24))
+    if (daysUntilInterview <= 30) {
+      return `${nextInterview.getMonth() + 1}月${nextInterview.getDate()}日`
+    }
+    return null
+  }
+
+  // フェーズ3: 定期届出リマインド（4〜5月）
+  const isAnnualReportPeriod = () => {
+    const now = new Date()
+    const month = now.getMonth() + 1
+    return month === 4 || month === 5
   }
 
   // チェックリストの進捗計算
@@ -650,9 +999,11 @@ export default function Home() {
                   {[
                     { id: 'dashboard', icon: '📊', label: 'ホーム' },
                     { id: 'staff', icon: '👥', label: 'スタッフ' },
+                    { id: 'help', icon: '❓', label: 'ヘルプ' },
+                    { id: 'settings', icon: '⚙️', label: '設定', ownerOnly: true },
                     { id: 'logs', icon: '📜', label: '履歴' },
                     { id: 'feedback', icon: '💬', label: '意見' },
-                  ].map(tab => (
+                  ].filter(tab => !tab.ownerOnly || currentUser?.role === 'owner').map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => { setActiveTab(tab.id); setSelectedStaffId(null) }}
@@ -712,32 +1063,84 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* フェーズ3: 定期届出リマインド */}
+              {isAnnualReportPeriod() && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl sm:rounded-2xl p-4 sm:p-6">
+                  <h2 className="text-base sm:text-lg font-bold mb-2 text-blue-400">📋 定期届出の時期です</h2>
+                  <p className="text-sm text-slate-400">
+                    毎年4〜5月は「受入れ・活動・支援実施状況届出書」（参考様式第3-6号）の提出期間です。
+                    すべての在籍スタッフについて届出を行ってください。
+                  </p>
+                </div>
+              )}
+
               <div className="bg-slate-800/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50">
                 <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">⚠️ 対応が必要なスタッフ</h2>
                 <div className="space-y-2 sm:space-y-3">
                   {activeStaff
                     .filter(s => getDaysUntil(s.residence_expiry) <= 90)
-                    .map(staff => (
-                      <div
-                        key={staff.id}
-                        onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
-                        className="flex items-center justify-between p-3 sm:p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl cursor-pointer hover:bg-amber-500/20 transition-all active:scale-[0.99]"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-white text-sm sm:text-base truncate">{staff.name}</p>
-                          <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(staff.facility_id)}</p>
+                    .sort((a, b) => getDaysUntil(a.residence_expiry) - getDaysUntil(b.residence_expiry))
+                    .map(staff => {
+                      const daysUntil = getDaysUntil(staff.residence_expiry)
+                      return (
+                        <div
+                          key={staff.id}
+                          onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
+                          className={`flex items-center justify-between p-3 sm:p-4 rounded-xl cursor-pointer transition-all active:scale-[0.99] ${
+                            daysUntil <= 14 ? 'bg-red-500/20 border border-red-500/50 hover:bg-red-500/30' :
+                            daysUntil <= 30 ? 'bg-red-500/10 border border-red-500/30 hover:bg-red-500/20' :
+                            daysUntil <= 60 ? 'bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20' :
+                            'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-white text-sm sm:text-base truncate">{staff.name}</p>
+                            <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(staff.facility_id)}</p>
+                          </div>
+                          <div className="text-right flex-shrink-0 ml-2">
+                            <p className={`font-semibold text-sm sm:text-base ${
+                              daysUntil <= 14 ? 'text-red-400' :
+                              daysUntil <= 30 ? 'text-red-400' :
+                              daysUntil <= 60 ? 'text-amber-400' :
+                              'text-yellow-400'
+                            }`}>残{daysUntil}日</p>
+                            <p className="text-xs text-slate-500">{staff.residence_expiry}</p>
+                          </div>
                         </div>
-                        <div className="text-right flex-shrink-0 ml-2">
-                          <p className="text-amber-400 font-semibold text-sm sm:text-base">残{getDaysUntil(staff.residence_expiry)}日</p>
-                          <p className="text-xs text-slate-500">{staff.residence_expiry}</p>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90).length === 0 && (
                     <p className="text-slate-500 text-center py-4 text-sm sm:text-base">現在、緊急の対応事項はありません</p>
                   )}
                 </div>
               </div>
+
+              {/* フェーズ3: 面談リマインダー */}
+              {activeStaff.filter(s => getNextInterviewDate(s)).length > 0 && (
+                <div className="bg-slate-800/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                  <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">📅 定期面談のリマインド</h2>
+                  <div className="space-y-2 sm:space-y-3">
+                    {activeStaff
+                      .filter(s => getNextInterviewDate(s))
+                      .map(staff => (
+                        <div
+                          key={staff.id}
+                          onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
+                          className="flex items-center justify-between p-3 sm:p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl cursor-pointer hover:bg-blue-500/20 transition-all"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-white text-sm sm:text-base truncate">{staff.name}</p>
+                            <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(staff.facility_id)}</p>
+                          </div>
+                          <div className="text-right flex-shrink-0 ml-2">
+                            <p className="text-blue-400 font-semibold text-sm sm:text-base">{getNextInterviewDate(staff)}</p>
+                            <p className="text-xs text-slate-500">までに面談</p>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -760,42 +1163,80 @@ export default function Home() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {(showArchive ? archivedStaff : activeStaff).map(staff => (
-                  <div
-                    key={staff.id}
-                    className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 sm:p-5 cursor-pointer hover:border-teal-500/50 transition-all"
-                  >
-                    <div onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}>
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h3 className="text-lg font-bold">{staff.name}</h3>
-                          <p className="text-sm text-slate-400">{getFacilityName(staff.facility_id)}</p>
+                {(showArchive ? archivedStaff : activeStaff).map(staff => {
+                  const daysUntilExpiry = getDaysUntil(staff.residence_expiry)
+                  const needsInterview = getNextInterviewDate(staff)
+
+                  return (
+                    <div
+                      key={staff.id}
+                      className={`bg-slate-800/50 border rounded-2xl p-4 sm:p-5 cursor-pointer hover:border-teal-500/50 transition-all ${
+                        daysUntilExpiry <= 30 ? 'border-red-500/50' :
+                        daysUntilExpiry <= 60 ? 'border-amber-500/50' :
+                        daysUntilExpiry <= 90 ? 'border-yellow-500/50' :
+                        'border-slate-700/50'
+                      }`}
+                    >
+                      <div onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h3 className="text-lg font-bold">{staff.name}</h3>
+                            <p className="text-sm text-slate-400">
+                              {getFacilityName(staff.facility_id)}
+                              {staff.visit_care_ready && <span className="ml-2 text-xs text-purple-400">🏠訪問可</span>}
+                            </p>
+                          </div>
+                          <span className="px-3 py-1 rounded-full text-xs bg-slate-700">{staff.nationality}</span>
                         </div>
-                        <span className="px-3 py-1 rounded-full text-xs bg-slate-700">{staff.nationality}</span>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-slate-500">入社日</span>
+                            <p>{staff.entry_date}</p>
+                          </div>
+                          <div>
+                            <span className="text-slate-500">在留期限</span>
+                            <p className={
+                              daysUntilExpiry <= 14 ? 'text-red-400 font-bold' :
+                              daysUntilExpiry <= 30 ? 'text-red-400 font-semibold' :
+                              daysUntilExpiry <= 60 ? 'text-amber-400 font-semibold' :
+                              daysUntilExpiry <= 90 ? 'text-yellow-400' : ''
+                            }>
+                              {staff.residence_expiry}
+                            </p>
+                          </div>
+                        </div>
+                        {/* フェーズ2/3: リマインダー表示 */}
+                        {!showArchive && (daysUntilExpiry <= 90 || needsInterview) && (
+                          <div className="mt-3 space-y-1">
+                            {daysUntilExpiry <= 90 && (
+                              <div className={`text-xs px-2 py-1 rounded ${
+                                daysUntilExpiry <= 14 ? 'bg-red-500/20 text-red-400' :
+                                daysUntilExpiry <= 30 ? 'bg-red-500/10 text-red-400' :
+                                daysUntilExpiry <= 60 ? 'bg-amber-500/10 text-amber-400' :
+                                'bg-yellow-500/10 text-yellow-400'
+                              }`}>
+                                ⚠️ 在留期限まで残り{daysUntilExpiry}日
+                              </div>
+                            )}
+                            {needsInterview && (
+                              <div className="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400">
+                                📅 {needsInterview}までに定期面談
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-slate-500">入社日</span>
-                          <p>{staff.entry_date}</p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">在留期限</span>
-                          <p className={getDaysUntil(staff.residence_expiry) <= 90 ? 'text-amber-400 font-semibold' : ''}>
-                            {staff.residence_expiry}
-                          </p>
-                        </div>
-                      </div>
+                      {showArchive && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRestoreStaff(staff.id) }}
+                          className="mt-3 w-full py-2 rounded-lg border border-teal-500/50 text-teal-400 text-sm hover:bg-teal-500/10"
+                        >
+                          ↩️ 復元する
+                        </button>
+                      )}
                     </div>
-                    {showArchive && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleRestoreStaff(staff.id) }}
-                        className="mt-3 w-full py-2 rounded-lg border border-teal-500/50 text-teal-400 text-sm hover:bg-teal-500/10"
-                      >
-                        ↩️ 復元する
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
                 {(showArchive ? archivedStaff : activeStaff).length === 0 && (
                   <p className="col-span-2 text-slate-500 text-center py-8">
                     {showArchive ? 'アーカイブされたスタッフはいません' : 'スタッフが登録されていません'}
@@ -820,16 +1261,37 @@ export default function Home() {
                 </div>
                 <div className="flex-1">
                   <h2 className="text-xl sm:text-2xl font-bold">{selectedStaff.name}</h2>
-                  <p className="text-slate-400">{getFacilityName(selectedStaff.facility_id)}</p>
+                  <p className="text-slate-400">
+                    {getFacilityName(selectedStaff.facility_id)}
+                    {selectedStaff.facility_ids?.length > 0 && (
+                      <span className="text-xs ml-2">
+                        (+{selectedStaff.facility_ids.filter(id => id !== selectedStaff.facility_id).length}事業所)
+                      </span>
+                    )}
+                  </p>
                 </div>
-                {selectedStaff.status !== 'archived' && (
-                  <button
-                    onClick={handleArchiveStaff}
-                    className="px-3 py-2 rounded-lg border border-rose-500/50 text-rose-400 text-sm hover:bg-rose-500/10"
-                  >
-                    📦 アーカイブ
-                  </button>
-                )}
+                <div className="flex gap-2">
+                  {/* フェーズ2: スタッフ編集ボタン */}
+                  {selectedStaff.status !== 'archived' && (
+                    <button
+                      onClick={() => {
+                        setEditingStaff({ ...selectedStaff })
+                        setShowEditStaff(true)
+                      }}
+                      className="px-3 py-2 rounded-lg border border-teal-500/50 text-teal-400 text-sm hover:bg-teal-500/10"
+                    >
+                      ✏️ 編集
+                    </button>
+                  )}
+                  {selectedStaff.status !== 'archived' && (
+                    <button
+                      onClick={handleArchiveStaff}
+                      className="px-3 py-2 rounded-lg border border-rose-500/50 text-rose-400 text-sm hover:bg-rose-500/10"
+                    >
+                      📦 アーカイブ
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* 基本情報 */}
@@ -843,7 +1305,17 @@ export default function Home() {
                   <div className="text-base sm:text-lg font-semibold">{selectedStaff.entry_date}</div>
                 </div>
                 <div className={`rounded-xl p-3 sm:p-4 border ${getDaysUntil(selectedStaff.residence_expiry) <= 90 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-                  <div className="text-xs sm:text-sm text-slate-500 mb-1">在留期限</div>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs sm:text-sm text-slate-500">在留期限</span>
+                    {selectedStaff.status !== 'archived' && (
+                      <button
+                        onClick={() => setShowResidenceUpdate(true)}
+                        className="text-xs text-teal-400 hover:text-teal-300"
+                      >
+                        更新
+                      </button>
+                    )}
+                  </div>
                   <div className={`text-base sm:text-lg font-semibold ${getDaysUntil(selectedStaff.residence_expiry) <= 90 ? 'text-amber-400' : ''}`}>
                     {selectedStaff.residence_expiry}
                     <span className="text-xs sm:text-sm font-normal ml-1 sm:ml-2">（残{getDaysUntil(selectedStaff.residence_expiry)}日）</span>
@@ -888,75 +1360,186 @@ export default function Home() {
                 )}
               </div>
 
+              {/* フェーズ2: 資格取得状況 */}
+              <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                <h3 className="text-lg font-bold mb-4">🎓 資格取得状況</h3>
+                <div className="space-y-3">
+                  {qualificationTypes.map(qual => {
+                    const status = staffQualifications[qual.id]
+                    return (
+                      <div key={qual.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => handleQualificationToggle(qual.id, !status?.acquired)}
+                            className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                              status?.acquired
+                                ? 'bg-teal-500 border-teal-500'
+                                : 'border-slate-600 hover:border-slate-500'
+                            }`}
+                            disabled={selectedStaff.status === 'archived'}
+                          >
+                            {status?.acquired && <span className="text-white text-sm">✓</span>}
+                          </button>
+                          <div>
+                            <span className={`font-medium ${status?.acquired ? 'text-white' : 'text-slate-400'}`}>
+                              {qual.name}
+                            </span>
+                            {qual.required_for_visit && (
+                              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-400">
+                                訪問系必須
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {status?.acquired && status?.acquired_date && (
+                          <span className="text-sm text-slate-500">{status.acquired_date} 取得</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                {selectedStaff.visit_care_ready && (
+                  <div className="mt-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                    <span className="text-purple-400 font-medium">🏠 訪問系サービス対応可</span>
+                    <p className="text-sm text-slate-400 mt-1">初任者研修修了 + 実務経験1年以上</p>
+                  </div>
+                )}
+              </div>
+
+              {/* フェーズ2: 在留期限更新履歴 */}
+              {residenceHistory.length > 0 && (
+                <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                  <h3 className="text-lg font-bold mb-4">📅 在留期限更新履歴</h3>
+                  <div className="space-y-2">
+                    {residenceHistory.map((history, index) => (
+                      <div key={history.id || index} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl border border-slate-700/50 text-sm">
+                        <div>
+                          <span className="text-slate-400">{history.old_expiry}</span>
+                          <span className="mx-2 text-slate-600">→</span>
+                          <span className="text-teal-400 font-medium">{history.new_expiry}</span>
+                        </div>
+                        <div className="text-slate-500">
+                          {history.updated_by_name} / {new Date(history.created_at).toLocaleDateString('ja-JP')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* チェックリスト */}
               <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-bold">✅ チェックリスト</h3>
-                  {!checklistEditMode ? (
-                    <button onClick={() => setChecklistEditMode(true)} className="px-3 py-1 rounded-lg border border-slate-600 text-slate-400 text-sm">
-                      編集
-                    </button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button onClick={handleCancelChecklist} className="px-3 py-1 rounded-lg border border-slate-600 text-slate-400 text-sm">
-                        キャンセル
-                      </button>
-                      <button onClick={handleSaveChecklist} className="px-3 py-1 rounded-lg bg-teal-500 text-white text-sm">
-                        保存
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
+                <h3 className="text-lg font-bold mb-4">✅ チェックリスト</h3>
+
                 <div className="space-y-3">
                   {Object.entries(checklistDefinitions).map(([phaseKey, phase]) => {
                     const progress = getPhaseProgress(phaseKey)
                     const isExpanded = expandedPhase === phaseKey
-                    
+                    const isEditing = editingPhase === phaseKey
+                    // フェーズ5: 一度きり項目で全完了の場合はロック
+                    const isLocked = phase.lockOnComplete && progress.percentage === 100
+
                     return (
-                      <div key={phaseKey} className="border border-slate-700/50 rounded-xl overflow-hidden">
-                        <button
-                          onClick={() => setExpandedPhase(isExpanded ? null : phaseKey)}
-                          className="w-full p-3 sm:p-4 flex items-center justify-between bg-slate-800/50 hover:bg-slate-800 transition-all"
-                        >
-                          <div className="flex items-center gap-3">
+                      <div key={phaseKey} className={`border rounded-xl overflow-hidden ${
+                        isLocked ? 'border-teal-500/30 bg-teal-500/5' : 'border-slate-700/50'
+                      }`}>
+                        <div className="w-full p-3 sm:p-4 flex items-center justify-between bg-slate-800/50">
+                          <button
+                            onClick={() => setExpandedPhase(isExpanded ? null : phaseKey)}
+                            className="flex items-center gap-3 flex-1 text-left"
+                          >
                             <span className="text-xl">{phase.icon}</span>
                             <span className="font-semibold">{phase.title}</span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="w-24 sm:w-32 h-2 bg-slate-700 rounded-full overflow-hidden">
+                            {isLocked && <span className="text-xs px-2 py-0.5 rounded bg-teal-500/20 text-teal-400">完了</span>}
+                          </button>
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <div className="w-16 sm:w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all"
+                                className={`h-full transition-all ${isLocked ? 'bg-teal-500' : 'bg-gradient-to-r from-teal-500 to-emerald-500'}`}
                                 style={{ width: `${progress.percentage}%` }}
                               />
                             </div>
-                            <span className="text-sm text-slate-400 w-12 text-right">{progress.completed}/{progress.total}</span>
-                            <span className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+                            <span className="text-xs sm:text-sm text-slate-400 w-10 text-right">{progress.completed}/{progress.total}</span>
+                            {/* フェーズ5: 個別編集ボタン */}
+                            {selectedStaff?.status !== 'archived' && !isLocked && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (isEditing) {
+                                    handleSaveChecklist()
+                                    setEditingPhase(null)
+                                  } else {
+                                    setEditingPhase(phaseKey)
+                                    setExpandedPhase(phaseKey)
+                                  }
+                                }}
+                                className={`px-2 py-1 rounded text-xs transition-all ${
+                                  isEditing
+                                    ? 'bg-teal-500 text-white'
+                                    : 'border border-slate-600 text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                {isEditing ? '保存' : '編集'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setExpandedPhase(isExpanded ? null : phaseKey)}
+                              className="p-1"
+                            >
+                              <span className={`transition-transform inline-block ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+                            </button>
                           </div>
-                        </button>
-                        
+                        </div>
+
                         {isExpanded && (
                           <div className="p-3 sm:p-4 space-y-2 bg-slate-900/50">
-                            {phase.items.map(item => (
-                              <label
-                                key={item.id}
-                                className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-all ${
-                                  checklistEditMode ? 'hover:bg-slate-800' : ''
-                                } ${isItemChecked(item.id) ? 'text-slate-400' : 'text-white'}`}
-                                onClick={() => handleChecklistItemToggle(item.id)}
-                              >
-                                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                                  isItemChecked(item.id)
-                                    ? 'bg-teal-500 border-teal-500'
-                                    : 'border-slate-600'
-                                }`}>
-                                  {isItemChecked(item.id) && <span className="text-white text-xs">✓</span>}
+                            {isEditing && (
+                              <div className="flex justify-end gap-2 mb-3 pb-3 border-b border-slate-700">
+                                <button
+                                  onClick={() => {
+                                    setPendingChecklistChanges({})
+                                    setEditingPhase(null)
+                                  }}
+                                  className="px-3 py-1 rounded text-xs border border-slate-600 text-slate-400"
+                                >
+                                  キャンセル
+                                </button>
+                              </div>
+                            )}
+                            {phase.items.map(item => {
+                              const itemChecked = isItemChecked(item.id)
+                              const itemInfo = staffChecklists[item.id]
+                              // 一度きり項目の場合、完了済み項目は編集不可
+                              const itemLocked = phase.lockOnComplete && itemChecked && !isEditing
+
+                              return (
+                                <div
+                                  key={item.id}
+                                  className={`flex items-start gap-3 p-2 rounded-lg transition-all ${
+                                    isEditing && !itemLocked ? 'hover:bg-slate-800 cursor-pointer' : ''
+                                  } ${itemChecked ? 'text-slate-400' : 'text-white'}`}
+                                  onClick={() => isEditing && !itemLocked && handleChecklistItemToggle(item.id)}
+                                >
+                                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                                    itemChecked
+                                      ? 'bg-teal-500 border-teal-500'
+                                      : 'border-slate-600'
+                                  }`}>
+                                    {itemChecked && <span className="text-white text-xs">✓</span>}
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className={`text-sm ${itemChecked ? 'line-through' : ''}`}>
+                                      {item.text}
+                                    </span>
+                                    {itemInfo?.completed_at && (
+                                      <p className="text-xs text-slate-500 mt-1">
+                                        {new Date(itemInfo.completed_at).toLocaleDateString('ja-JP')} 完了
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                                <span className={`text-sm ${isItemChecked(item.id) ? 'line-through' : ''}`}>
-                                  {item.text}
-                                </span>
-                              </label>
-                            ))}
+                              )
+                            })}
                           </div>
                         )}
                       </div>
@@ -969,27 +1552,345 @@ export default function Home() {
               <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-bold">🗣️ 面談記録</h3>
-                  <button onClick={() => setShowAddInterview(true)} className="px-3 sm:px-4 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 text-sm">
-                    + 面談記録を追加
-                  </button>
+                  {selectedStaff?.status !== 'archived' && (
+                    <button onClick={() => setShowAddInterview(true)} className="px-3 sm:px-4 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 text-sm">
+                      + 面談記録を追加
+                    </button>
+                  )}
                 </div>
                 <div className="space-y-3">
-                  {interviews.map(interview => (
-                    <div key={interview.id} className="p-3 sm:p-4 bg-slate-900/50 rounded-xl border border-slate-700/50">
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="font-semibold">{interview.interview_date}</span>
-                        <span className="text-xs sm:text-sm text-slate-500">記録者: {currentUser?.name || '不明'}</span>
+                  {interviews.map(interview => {
+                    const typeLabel = {
+                      regular: '定期面談',
+                      renewal: '更新時面談',
+                      exit: '退職時面談',
+                      other: 'その他'
+                    }[interview.interview_type] || '面談'
+                    const typeColor = {
+                      regular: 'bg-blue-500/20 text-blue-400',
+                      renewal: 'bg-purple-500/20 text-purple-400',
+                      exit: 'bg-rose-500/20 text-rose-400',
+                      other: 'bg-slate-500/20 text-slate-400'
+                    }[interview.interview_type] || 'bg-slate-500/20 text-slate-400'
+
+                    return (
+                      <div key={interview.id} className="p-3 sm:p-4 bg-slate-900/50 rounded-xl border border-slate-700/50">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold">{interview.interview_date}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded ${typeColor}`}>{typeLabel}</span>
+                            {interview.supervisor_interview && (
+                              <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">監督者</span>
+                            )}
+                          </div>
+                          <span className="text-xs sm:text-sm text-slate-500">記録者: {currentUser?.name || '不明'}</span>
+                        </div>
+                        <p className="text-slate-300 text-sm">{interview.content}</p>
+                        {interview.next_actions && (
+                          <p className="mt-2 text-xs sm:text-sm text-teal-400">次のアクション: {interview.next_actions}</p>
+                        )}
                       </div>
-                      <p className="text-slate-300 text-sm">{interview.content}</p>
-                      {interview.next_actions && (
-                        <p className="mt-2 text-xs sm:text-sm text-teal-400">次のアクション: {interview.next_actions}</p>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                   {interviews.length === 0 && (
                     <p className="text-slate-500 text-center py-4">面談記録はありません</p>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* フェーズ7: ヘルプ・チャット相談 */}
+          {activeTab === 'help' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="flex items-center gap-2">
+                {helpStep !== 'main' && (
+                  <button
+                    onClick={() => {
+                      setHelpStep('main')
+                      setSelectedProcedure(null)
+                      setSelectedProcedureStaff(null)
+                    }}
+                    className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+                  >
+                    ← 戻る
+                  </button>
+                )}
+                <h2 className="text-xl font-bold">❓ ヘルプ・相談</h2>
+              </div>
+
+              {/* メイン選択画面 */}
+              {helpStep === 'main' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <button
+                    onClick={() => setHelpStep('procedure')}
+                    className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                  >
+                    <div className="text-3xl mb-3">📋</div>
+                    <h3 className="text-lg font-bold">手続きの相談</h3>
+                    <p className="text-sm text-slate-400 mt-2">退職・更新など手続きの案内</p>
+                  </button>
+                  <button
+                    onClick={() => setHelpStep('manual')}
+                    className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                  >
+                    <div className="text-3xl mb-3">📖</div>
+                    <h3 className="text-lg font-bold">マニュアル</h3>
+                    <p className="text-sm text-slate-400 mt-2">アプリの使い方・手続き案内</p>
+                  </button>
+                  <button
+                    onClick={() => window.open('https://www.ssw.go.jp/', '_blank')}
+                    className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-blue-500/50 transition-all text-left"
+                  >
+                    <div className="text-3xl mb-3">🔗</div>
+                    <h3 className="text-lg font-bold">協議会システム</h3>
+                    <p className="text-sm text-slate-400 mt-2">介護分野特定技能協議会へ</p>
+                  </button>
+                  <div className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl">
+                    <div className="text-3xl mb-3">📞</div>
+                    <h3 className="text-lg font-bold">専門家連絡先</h3>
+                    <div className="mt-3 space-y-2">
+                      {contacts.slice(0, 2).map(contact => (
+                        <div key={contact.id} className="text-sm">
+                          <span className="text-teal-400">{contact.role}</span>
+                          <span className="text-slate-400 ml-2">{contact.name}</span>
+                        </div>
+                      ))}
+                      {currentUser?.role === 'owner' && (
+                        <button
+                          onClick={() => setShowContactManager(true)}
+                          className="text-xs text-slate-500 hover:text-white mt-2"
+                        >
+                          連絡先を管理 →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 手続きフローチャート */}
+              {helpStep === 'procedure' && !selectedProcedure && (
+                <div className="space-y-4">
+                  <p className="text-slate-400">どの手続きについて確認しますか？</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {[
+                      { id: 'renewal', icon: '🔄', title: '在留期間更新', desc: '在留カードの期限が近い場合' },
+                      { id: 'exit', icon: '👋', title: '退職手続き', desc: 'スタッフが退職する場合' },
+                      { id: 'visitcare', icon: '🏠', title: '訪問系サービス', desc: '訪問介護に従事させる場合' },
+                      { id: 'annual', icon: '📅', title: '定期届出', desc: '年1回の届出（4〜5月）' },
+                    ].map(proc => (
+                      <button
+                        key={proc.id}
+                        onClick={() => setSelectedProcedure(proc.id)}
+                        className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl hover:border-teal-500/50 transition-all text-left"
+                      >
+                        <span className="text-2xl">{proc.icon}</span>
+                        <h4 className="font-bold mt-2">{proc.title}</h4>
+                        <p className="text-sm text-slate-400">{proc.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* スタッフ選択 */}
+              {helpStep === 'procedure' && selectedProcedure && !selectedProcedureStaff && (
+                <div className="space-y-4">
+                  <p className="text-slate-400">対象のスタッフを選択してください</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activeStaff.map(staff => (
+                      <button
+                        key={staff.id}
+                        onClick={() => setSelectedProcedureStaff(staff)}
+                        className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl hover:border-teal-500/50 transition-all text-left"
+                      >
+                        <p className="font-bold">{staff.name}</p>
+                        <p className="text-sm text-slate-400">{getFacilityName(staff.facility_id)}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 手続き案内 */}
+              {helpStep === 'procedure' && selectedProcedure && selectedProcedureStaff && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-teal-500/10 border border-teal-500/30 rounded-xl">
+                    <p className="text-teal-400 font-medium">対象: {selectedProcedureStaff.name}さん</p>
+                  </div>
+
+                  {selectedProcedure === 'renewal' && (
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-bold">🔄 在留期間更新の手順</h3>
+                      <div className="space-y-3">
+                        {[
+                          { step: 1, title: '期限確認', desc: `在留期限: ${selectedProcedureStaff.residence_expiry}（残${getDaysUntil(selectedProcedureStaff.residence_expiry)}日）`, done: true },
+                          { step: 2, title: '協議会証明書の確認', desc: '有効期限内であることを確認' },
+                          { step: 3, title: '必要書類の準備', desc: '申請書、写真、在留カード、パスポート等' },
+                          { step: 4, title: '入管へ申請', desc: '期限の3ヶ月前から申請可能' },
+                          { step: 5, title: '新しい在留カードの受領', desc: '受領後、システムで期限を更新' },
+                        ].map(item => (
+                          <div key={item.step} className="flex items-start gap-3 p-3 bg-slate-800/50 rounded-xl">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                              item.done ? 'bg-teal-500' : 'bg-slate-700'
+                            }`}>
+                              {item.step}
+                            </div>
+                            <div>
+                              <p className="font-medium">{item.title}</p>
+                              <p className="text-sm text-slate-400">{item.desc}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedStaffId(selectedProcedureStaff.id)
+                          setActiveTab('staffDetail')
+                        }}
+                        className="w-full py-3 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                      >
+                        {selectedProcedureStaff.name}さんの詳細を開く
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedProcedure === 'exit' && (
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-bold">👋 退職手続きの手順</h3>
+                      <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                        <p className="text-amber-400 text-sm">退職日から14日以内に届出が必要です</p>
+                      </div>
+                      <div className="space-y-3">
+                        {[
+                          { step: 1, title: '退職日の確定', desc: '本人と退職日を確認' },
+                          { step: 2, title: '入管へ届出', desc: '参考様式第3-1号（退職）を14日以内に提出' },
+                          { step: 3, title: '受入れ困難の届出', desc: '該当する場合は参考様式第3-5号を提出' },
+                          { step: 4, title: '協議会へ報告', desc: '協議会システムで退職を報告' },
+                          { step: 5, title: 'ハローワークへ届出', desc: '10日以内に届出' },
+                          { step: 6, title: '社会保険の資格喪失届', desc: '退職日から5日以内' },
+                        ].map(item => (
+                          <div key={item.step} className="flex items-start gap-3 p-3 bg-slate-800/50 rounded-xl">
+                            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-sm font-bold">
+                              {item.step}
+                            </div>
+                            <div>
+                              <p className="font-medium">{item.title}</p>
+                              <p className="text-sm text-slate-400">{item.desc}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedProcedure === 'visitcare' && (
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-bold">🏠 訪問系サービス従事の要件</h3>
+                      <div className="space-y-3">
+                        <div className={`p-3 rounded-xl border ${
+                          staffQualifications['shoninsya']?.acquired
+                            ? 'bg-teal-500/10 border-teal-500/30'
+                            : 'bg-slate-800/50 border-slate-700/50'
+                        }`}>
+                          <p className="font-medium">初任者研修の修了</p>
+                          <p className="text-sm text-slate-400">
+                            {staffQualifications['shoninsya']?.acquired ? '✓ 修了済み' : '未修了'}
+                          </p>
+                        </div>
+                        <div className="p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl">
+                          <p className="font-medium">介護の実務経験1年以上</p>
+                          <p className="text-sm text-slate-400">
+                            入社日: {selectedProcedureStaff.entry_date}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-400">
+                        上記を満たした後、JICWELSへの申請と各種準備が必要です。
+                        詳細はチェックリストの「訪問系サービス従事」を確認してください。
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* マニュアル */}
+              {helpStep === 'manual' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl">
+                      <h4 className="font-bold mb-2">📱 アプリの使い方</h4>
+                      <ul className="space-y-2 text-sm text-slate-400">
+                        <li>• ダッシュボード: 在籍状況とアラートを確認</li>
+                        <li>• スタッフ一覧: スタッフの追加・編集・詳細確認</li>
+                        <li>• チェックリスト: フェーズごとの手続き進捗管理</li>
+                        <li>• 面談記録: 定期面談の記録と履歴</li>
+                      </ul>
+                    </div>
+                    <div className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl">
+                      <h4 className="font-bold mb-2">📋 定期的な手続き</h4>
+                      <ul className="space-y-2 text-sm text-slate-400">
+                        <li>• 定期面談: 3ヶ月に1回（参考様式第5-5号、第5-6号）</li>
+                        <li>• 定期届出: 年1回 4〜5月（参考様式第3-6号）</li>
+                        <li>• 在留期間更新: 期限の3ヶ月前から申請可能</li>
+                      </ul>
+                    </div>
+                    <div className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl">
+                      <h4 className="font-bold mb-2">⚠️ 届出期限</h4>
+                      <ul className="space-y-2 text-sm text-slate-400">
+                        <li>• 入社・退職時: 14日以内に入管へ届出</li>
+                        <li>• 支援計画変更: 14日以内に届出</li>
+                        <li>• ハローワーク: 入社10日以内、退職10日以内</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* フェーズ2: 設定画面（責任者のみ） */}
+          {activeTab === 'settings' && currentUser?.role === 'owner' && (
+            <div className="space-y-6 animate-fadeIn">
+              <h2 className="text-xl font-bold">⚙️ 設定</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <button
+                  onClick={() => setShowMemberManager(true)}
+                  className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                >
+                  <div className="text-2xl mb-2">👤</div>
+                  <h3 className="text-lg font-bold">メンバー管理</h3>
+                  <p className="text-sm text-slate-400 mt-1">招待・権限設定</p>
+                  <p className="text-xs text-slate-500 mt-2">登録数: {members.length}</p>
+                </button>
+                <button
+                  onClick={() => setShowFacilityManager(true)}
+                  className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                >
+                  <div className="text-2xl mb-2">🏢</div>
+                  <h3 className="text-lg font-bold">事業所管理</h3>
+                  <p className="text-sm text-slate-400 mt-1">事業所の追加・編集</p>
+                  <p className="text-xs text-slate-500 mt-2">登録数: {facilities.length}</p>
+                </button>
+                <button
+                  onClick={() => setShowNationalityManager(true)}
+                  className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                >
+                  <div className="text-2xl mb-2">🌍</div>
+                  <h3 className="text-lg font-bold">国籍管理</h3>
+                  <p className="text-sm text-slate-400 mt-1">国籍リストの管理</p>
+                  <p className="text-xs text-slate-500 mt-2">登録数: {nationalities.length}</p>
+                </button>
+                <button
+                  onClick={() => setShowContactManager(true)}
+                  className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-teal-500/50 transition-all text-left"
+                >
+                  <div className="text-2xl mb-2">📞</div>
+                  <h3 className="text-lg font-bold">連絡先管理</h3>
+                  <p className="text-sm text-slate-400 mt-1">専門家の連絡先</p>
+                  <p className="text-xs text-slate-500 mt-2">登録数: {contacts.length}</p>
+                </button>
               </div>
             </div>
           )}
@@ -1093,11 +1994,9 @@ export default function Home() {
                     onChange={(e) => setNewStaff(prev => ({ ...prev, nationality: e.target.value }))}
                     className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
                   >
-                    <option value="ネパール">ネパール</option>
-                    <option value="ベトナム">ベトナム</option>
-                    <option value="フィリピン">フィリピン</option>
-                    <option value="インドネシア">インドネシア</option>
-                    <option value="ミャンマー">ミャンマー</option>
+                    {nationalities.map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1151,6 +2050,25 @@ export default function Home() {
             <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
               <h3 className="text-xl font-bold mb-4">面談記録を追加</h3>
               <div className="space-y-4">
+                {/* フェーズ6: 面談種類選択 */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">面談種類 *</label>
+                  <select
+                    value={newInterview.interview_type}
+                    onChange={(e) => setNewInterview(prev => ({ ...prev, interview_type: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    <option value="regular">定期面談（3ヶ月ごと）</option>
+                    <option value="renewal">更新時面談</option>
+                    <option value="exit">退職時面談</option>
+                    <option value="other">その他</option>
+                  </select>
+                  {newInterview.interview_type === 'regular' && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      参考様式第5-5号（外国人用）・第5-6号（監督者用）に対応
+                    </p>
+                  )}
+                </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">面談日 *</label>
                   <input
@@ -1170,6 +2088,17 @@ export default function Home() {
                     placeholder="面談の内容を記録..."
                   />
                 </div>
+                {newInterview.interview_type === 'regular' && (
+                  <label className="flex items-center gap-2 p-3 bg-slate-900/50 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newInterview.supervisor_interview}
+                      onChange={(e) => setNewInterview(prev => ({ ...prev, supervisor_interview: e.target.checked }))}
+                      className="w-4 h-4 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
+                    />
+                    <span className="text-sm">監督者面談も同時に記録する</span>
+                  </label>
+                )}
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">次のアクション</label>
                   <input
@@ -1182,7 +2111,13 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
-                <button onClick={() => setShowAddInterview(false)} className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400">
+                <button
+                  onClick={() => {
+                    setShowAddInterview(false)
+                    setNewInterview({ date: '', content: '', next_actions: '', interview_type: 'regular', supervisor_interview: false })
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
                   キャンセル
                 </button>
                 <button onClick={handleAddInterview} className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold">
@@ -1193,9 +2128,477 @@ export default function Home() {
           </div>
         )}
 
+        {/* フェーズ2: スタッフ編集モーダル */}
+        {showEditStaff && editingStaff && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-bold mb-4">スタッフ情報を編集</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">氏名 *</label>
+                  <input
+                    type="text"
+                    value={editingStaff.name}
+                    onChange={(e) => setEditingStaff(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">国籍</label>
+                  <select
+                    value={editingStaff.nationality}
+                    onChange={(e) => setEditingStaff(prev => ({ ...prev, nationality: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    {nationalities.map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">入社日 *</label>
+                  <input
+                    type="date"
+                    value={editingStaff.entry_date}
+                    onChange={(e) => setEditingStaff(prev => ({ ...prev, entry_date: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    style={{ colorScheme: 'dark' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">メイン事業所</label>
+                  <select
+                    value={editingStaff.facility_id || ''}
+                    onChange={(e) => setEditingStaff(prev => ({ ...prev, facility_id: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    <option value="">選択してください</option>
+                    {facilities.map(f => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* フェーズ2: 複数事業所配属 */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">追加配属事業所（複数選択可）</label>
+                  <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-slate-900 rounded-lg border border-slate-700">
+                    {facilities.filter(f => f.id !== editingStaff.facility_id).map(f => (
+                      <label key={f.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editingStaff.facility_ids?.includes(f.id) || false}
+                          onChange={(e) => {
+                            const newIds = e.target.checked
+                              ? [...(editingStaff.facility_ids || []), f.id]
+                              : (editingStaff.facility_ids || []).filter(id => id !== f.id)
+                            setEditingStaff(prev => ({ ...prev, facility_ids: newIds }))
+                          }}
+                          className="w-4 h-4 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
+                        />
+                        <span className="text-sm">{f.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingStaff.visit_care_ready || false}
+                      onChange={(e) => setEditingStaff(prev => ({ ...prev, visit_care_ready: e.target.checked }))}
+                      className="w-4 h-4 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
+                    />
+                    <span className="text-sm">訪問系サービス対応可</span>
+                  </label>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowEditStaff(false)
+                    setEditingStaff(null)
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleEditStaff}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ2: 在留期限更新モーダル */}
+        {showResidenceUpdate && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
+              <h3 className="text-xl font-bold mb-4">在留期限を更新</h3>
+              <div className="space-y-4">
+                <div className="p-3 bg-slate-900/50 rounded-lg">
+                  <span className="text-sm text-slate-400">現在の在留期限: </span>
+                  <span className="font-medium">{selectedStaff?.residence_expiry}</span>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">新しい在留期限 *</label>
+                  <input
+                    type="date"
+                    value={newResidenceExpiry}
+                    onChange={(e) => setNewResidenceExpiry(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    style={{ colorScheme: 'dark' }}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowResidenceUpdate(false)
+                    setNewResidenceExpiry('')
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleUpdateResidenceExpiry}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                >
+                  更新
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ2: 事業所管理モーダル */}
+        {showFacilityManager && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-lg border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-bold mb-4">🏢 事業所管理</h3>
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-700">
+                  <h4 className="text-sm font-medium text-slate-400 mb-3">新規事業所を追加</h4>
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={newFacilityName}
+                      onChange={(e) => setNewFacilityName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                      placeholder="事業所名"
+                    />
+                    <input
+                      type="text"
+                      value={newFacilityAddress}
+                      onChange={(e) => setNewFacilityAddress(e.target.value)}
+                      className="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                      placeholder="住所（任意）"
+                    />
+                    <button
+                      onClick={handleAddFacility}
+                      className="w-full py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 hover:bg-teal-500/30"
+                    >
+                      追加
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-slate-400 mb-3">登録済み事業所</h4>
+                  <div className="space-y-2">
+                    {facilities.map(f => (
+                      <div key={f.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                        <div>
+                          <p className="font-medium">{f.name}</p>
+                          {f.address && <p className="text-sm text-slate-500">{f.address}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowFacilityManager(false)}
+                  className="px-6 py-2 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ2: 国籍管理モーダル */}
+        {showNationalityManager && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-bold mb-4">🌍 国籍管理</h3>
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newNationality}
+                    onChange={(e) => setNewNationality(e.target.value)}
+                    className="flex-1 px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    placeholder="新しい国籍名"
+                  />
+                  <button
+                    onClick={handleAddNationality}
+                    className="px-4 py-3 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 hover:bg-teal-500/30"
+                  >
+                    追加
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {nationalities.map(n => (
+                    <span key={n} className="px-3 py-1 rounded-full bg-slate-700 text-sm">{n}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowNationalityManager(false)}
+                  className="px-6 py-2 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ4: メンバー管理モーダル */}
+        {showMemberManager && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">👤 メンバー管理</h3>
+                <button
+                  onClick={() => setShowInviteMember(true)}
+                  className="px-4 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 hover:bg-teal-500/30 text-sm"
+                >
+                  + メンバー招待
+                </button>
+              </div>
+              <div className="space-y-3">
+                {members.map(member => (
+                  <div key={member.id} className="flex items-center justify-between p-4 bg-slate-900/50 rounded-xl border border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
+                        member.status === 'disabled' ? 'bg-slate-700' : 'bg-gradient-to-br from-teal-500 to-emerald-600'
+                      }`}>
+                        {member.name?.charAt(0) || '?'}
+                      </div>
+                      <div>
+                        <p className={`font-medium ${member.status === 'disabled' ? 'text-slate-500' : 'text-white'}`}>
+                          {member.name}
+                          {member.id === currentUser?.id && <span className="ml-2 text-xs text-teal-400">（自分）</span>}
+                        </p>
+                        <p className="text-sm text-slate-500">{member.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={member.role}
+                        onChange={(e) => handleChangeRole(member.id, e.target.value)}
+                        disabled={member.id === currentUser?.id}
+                        className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm focus:border-teal-500 focus:outline-none disabled:opacity-50"
+                      >
+                        <option value="owner">責任者</option>
+                        <option value="admin">担当者</option>
+                        <option value="staff">確認者</option>
+                      </select>
+                      {member.id !== currentUser?.id && (
+                        <button
+                          onClick={() => handleToggleAccountStatus(member.id)}
+                          className={`px-3 py-2 rounded-lg text-sm border ${
+                            member.status === 'disabled'
+                              ? 'border-teal-500/50 text-teal-400 hover:bg-teal-500/10'
+                              : 'border-rose-500/50 text-rose-400 hover:bg-rose-500/10'
+                          }`}
+                        >
+                          {member.status === 'disabled' ? '有効化' : '無効化'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowMemberManager(false)}
+                  className="px-6 py-2 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ7: 連絡先管理モーダル */}
+        {showContactManager && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-lg border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-bold mb-4">📞 連絡先管理</h3>
+              {currentUser?.role === 'owner' && (
+                <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-700 mb-4">
+                  <h4 className="text-sm font-medium text-slate-400 mb-3">新規連絡先を追加</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      value={newContact.name}
+                      onChange={(e) => setNewContact(prev => ({ ...prev, name: e.target.value }))}
+                      className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm"
+                      placeholder="名前・事務所名"
+                    />
+                    <input
+                      type="text"
+                      value={newContact.role}
+                      onChange={(e) => setNewContact(prev => ({ ...prev, role: e.target.value }))}
+                      className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm"
+                      placeholder="役割（行政書士等）"
+                    />
+                    <input
+                      type="tel"
+                      value={newContact.phone}
+                      onChange={(e) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
+                      className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm"
+                      placeholder="電話番号"
+                    />
+                    <input
+                      type="email"
+                      value={newContact.email}
+                      onChange={(e) => setNewContact(prev => ({ ...prev, email: e.target.value }))}
+                      className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm"
+                      placeholder="メールアドレス"
+                    />
+                    <input
+                      type="text"
+                      value={newContact.note}
+                      onChange={(e) => setNewContact(prev => ({ ...prev, note: e.target.value }))}
+                      className="col-span-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm"
+                      placeholder="備考"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (newContact.name && newContact.role) {
+                        setContacts([...contacts, { ...newContact, id: Date.now() }])
+                        setNewContact({ name: '', role: '', phone: '', email: '', note: '' })
+                      }
+                    }}
+                    className="w-full mt-3 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 hover:bg-teal-500/30 text-sm"
+                  >
+                    追加
+                  </button>
+                </div>
+              )}
+              <div className="space-y-3">
+                {contacts.map(contact => (
+                  <div key={contact.id} className="p-4 bg-slate-900/50 rounded-xl border border-slate-700">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium">{contact.name}</p>
+                        <p className="text-sm text-teal-400">{contact.role}</p>
+                      </div>
+                      {currentUser?.role === 'owner' && (
+                        <button
+                          onClick={() => setContacts(contacts.filter(c => c.id !== contact.id))}
+                          className="text-slate-500 hover:text-rose-400"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="mt-2 text-sm text-slate-400 space-y-1">
+                      {contact.phone && <p>📞 {contact.phone}</p>}
+                      {contact.email && <p>✉️ {contact.email}</p>}
+                      {contact.note && <p className="text-slate-500">{contact.note}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowContactManager(false)}
+                  className="px-6 py-2 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ4: メンバー招待モーダル */}
+        {showInviteMember && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
+              <h3 className="text-xl font-bold mb-4">メンバーを招待</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">名前 *</label>
+                  <input
+                    type="text"
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    placeholder="山田 太郎"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">メールアドレス *</label>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    placeholder="email@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">権限</label>
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    <option value="admin">担当者</option>
+                    <option value="staff">確認者</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowInviteMember(false)
+                    setInviteEmail('')
+                    setInviteName('')
+                    setInviteRole('staff')
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleInviteMember}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                >
+                  招待
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <footer className="border-t border-slate-800 mt-12 py-6">
           <div className="max-w-7xl mx-auto px-4 text-center text-sm text-slate-500">
-            <p>特定技能外国人 受入れ管理システム v1.1</p>
+            <p>特定技能外国人 受入れ管理システム v2.0</p>
           </div>
         </footer>
       </div>
