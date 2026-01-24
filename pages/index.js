@@ -598,12 +598,25 @@ export default function Home() {
         return
       }
 
+      // 招待メール送信
+      const emailRes = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: inviteEmail,
+          name: inviteName,
+          role: inviteRole,
+          inviterName: currentUser?.name || '管理者'
+        })
+      })
+
       await logActivity('create', 'users', data[0].id, inviteName, null, { email: inviteEmail, role: inviteRole }, `${inviteName}さんを招待`)
 
-      // 招待URLをクリップボードにコピー
-      const inviteUrl = `${window.location.origin}?invite=${data[0].id}`
-      await navigator.clipboard.writeText(inviteUrl)
-      alert(`${inviteName}さんを追加しました。\n\n招待URLをクリップボードにコピーしました。\nLINEやメールで相手に送ってください。`)
+      if (emailRes.ok) {
+        alert(`${inviteName}さんに招待メールを送信しました`)
+      } else {
+        alert(`${inviteName}さんを追加しました（メール送信に失敗しました）`)
+      }
       loadData()
       setShowInviteMember(false)
       setInviteEmail('')
@@ -659,14 +672,27 @@ export default function Home() {
     loadData()
   }
 
-  // フェーズ4: 招待URLをコピー
+  // フェーズ4: 招待メール再送信
   const handleResendInvite = async (member) => {
     try {
-      const inviteUrl = `${window.location.origin}?invite=${member.id}`
-      await navigator.clipboard.writeText(inviteUrl)
-      alert(`${member.name}さんの招待URLをコピーしました。\n\nLINEやメールで相手に送ってください。`)
+      const emailRes = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: member.email,
+          name: member.name,
+          role: member.role,
+          inviterName: currentUser?.name || '管理者'
+        })
+      })
+
+      if (emailRes.ok) {
+        alert(`${member.name}さんに招待メールを再送信しました`)
+      } else {
+        alert('メール送信に失敗しました')
+      }
     } catch (err) {
-      alert('コピーに失敗しました')
+      alert('メール送信に失敗しました')
     }
   }
 
@@ -2577,7 +2603,7 @@ export default function Home() {
                             onClick={() => handleResendInvite(member)}
                             className="px-2 sm:px-3 py-2 rounded-lg text-sm border border-teal-500/50 text-teal-400 hover:bg-teal-500/10"
                           >
-                            URLコピー
+                            再送信
                           </button>
                           <button
                             onClick={() => handleDeletePendingMember(member.id)}
@@ -2765,7 +2791,7 @@ export default function Home() {
                   disabled={inviteSending}
                   className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold disabled:opacity-50"
                 >
-                  {inviteSending ? '処理中...' : '追加してURLをコピー'}
+                  {inviteSending ? '送信中...' : '招待メールを送信'}
                 </button>
               </div>
             </div>

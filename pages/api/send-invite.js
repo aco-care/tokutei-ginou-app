@@ -1,6 +1,12 @@
-import { Resend } from 'resend'
+import nodemailer from 'nodemailer'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+})
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -22,8 +28,8 @@ export default async function handler(req, res) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tokutei-ginou-app.vercel.app'
 
   try {
-    const { data, error } = await resend.emails.send({
-      from: '特定技能 受入れ管理 <noreply@resend.dev>',
+    await transporter.sendMail({
+      from: `"特定技能 受入れ管理" <${process.env.GMAIL_USER}>`,
       to: email,
       subject: `【特定技能 受入れ管理】${inviterName}さんから招待が届いています`,
       html: `
@@ -45,14 +51,9 @@ export default async function handler(req, res) {
       `
     })
 
-    if (error) {
-      console.error('Resend error:', error)
-      return res.status(500).json({ error: 'メール送信に失敗しました' })
-    }
-
-    return res.status(200).json({ success: true, messageId: data?.id })
+    return res.status(200).json({ success: true })
   } catch (err) {
-    console.error('Send invite error:', err)
+    console.error('Gmail send error:', err)
     return res.status(500).json({ error: 'メール送信に失敗しました' })
   }
 }
