@@ -9,10 +9,11 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "next": "14.0.4",
     "react": "^18",
     "react-dom": "^18",
-    "@supabase/supabase-js": "^2.39.0"
+    "resend": "^6.8.0"
   },
   "devDependencies": {
     "autoprefixer": "^10.0.1",

@@ -572,33 +572,61 @@ export default function Home() {
     loadStaffDetails(selectedStaffId)
   }
 
-  // フェーズ4: メンバー招待（※実際のメール送信はSupabaseの設定が必要）
+  // フェーズ4: メンバー招待
+  const [inviteSending, setInviteSending] = useState(false)
+
   const handleInviteMember = async () => {
     if (!inviteEmail || !inviteName) {
       alert('メールアドレスと名前は必須です')
       return
     }
 
-    // Note: 実際のメンバー招待にはSupabase Auth Admin APIが必要
-    // ここではユーザーテーブルに仮登録する形で実装
-    const { data, error } = await supabase.from('users').insert({
-      email: inviteEmail,
-      name: inviteName,
-      role: inviteRole,
-      status: 'pending' // 招待中
-    }).select()
+    setInviteSending(true)
 
-    if (error) {
-      alert('エラー: ' + error.message)
-      return
+    try {
+      // ユーザーテーブルに仮登録
+      const { data, error } = await supabase.from('users').insert({
+        email: inviteEmail,
+        name: inviteName,
+        role: inviteRole,
+        status: 'pending' // 招待中
+      }).select()
+
+      if (error) {
+        alert('エラー: ' + error.message)
+        setInviteSending(false)
+        return
+      }
+
+      // 招待メール送信
+      const emailRes = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: inviteEmail,
+          name: inviteName,
+          role: inviteRole,
+          inviterName: currentUser?.name || '管理者'
+        })
+      })
+
+      if (!emailRes.ok) {
+        console.warn('招待メール送信に失敗しましたが、ユーザーは登録されました')
+      }
+
+      await logActivity('create', 'users', data[0].id, inviteName, null, { email: inviteEmail, role: inviteRole }, `${inviteName}さんを招待`)
+      alert(`${inviteName}さんに招待メールを送信しました`)
+      loadData()
+      setShowInviteMember(false)
+      setInviteEmail('')
+      setInviteName('')
+      setInviteRole('staff')
+    } catch (err) {
+      console.error('Invite error:', err)
+      alert('招待処理中にエラーが発生しました')
+    } finally {
+      setInviteSending(false)
     }
-
-    await logActivity('create', 'users', data[0].id, inviteName, null, { email: inviteEmail, role: inviteRole }, `${inviteName}さんを招待`)
-    loadData()
-    setShowInviteMember(false)
-    setInviteEmail('')
-    setInviteName('')
-    setInviteRole('staff')
   }
 
   // フェーズ4: メンバーの権限変更
@@ -2704,9 +2732,10 @@ export default function Home() {
                 </button>
                 <button
                   onClick={handleInviteMember}
-                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                  disabled={inviteSending}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold disabled:opacity-50"
                 >
-                  招待
+                  {inviteSending ? '送信中...' : '招待メールを送信'}
                 </button>
               </div>
             </div>
