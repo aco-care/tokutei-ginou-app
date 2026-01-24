@@ -142,6 +142,7 @@ export default function Home() {
   const [activityLogs, setActivityLogs] = useState([])
   const [feedbackContent, setFeedbackContent] = useState('')
   const [feedbackSent, setFeedbackSent] = useState(false)
+  const [feedbackList, setFeedbackList] = useState([]) // 責任者用: 届いたフィードバック一覧
 
   // スタッフメモ
   const [staffMemo, setStaffMemo] = useState('')
@@ -770,19 +771,28 @@ export default function Home() {
   // フィードバック送信
   const handleSendFeedback = async () => {
     if (!feedbackContent.trim()) return
-    
+
     const { error } = await supabase.from('feedback').insert({
       user_id: currentUser?.id,
       user_name: currentUser?.name,
       content: feedbackContent,
       feedback_type: 'suggestion'
     })
-    
+
     if (!error) {
       setFeedbackSent(true)
       setFeedbackContent('')
       setTimeout(() => setFeedbackSent(false), 3000)
     }
+  }
+
+  // 責任者用: フィードバック一覧を取得
+  const loadFeedbackList = async () => {
+    const { data } = await supabase
+      .from('feedback')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (data) setFeedbackList(data)
   }
 
   // ユーティリティ
@@ -1008,7 +1018,14 @@ export default function Home() {
                   ].filter(tab => !tab.ownerOnly || currentUser?.role === 'owner').map(tab => (
                     <button
                       key={tab.id}
-                      onClick={() => { setActiveTab(tab.id); setSelectedStaffId(null) }}
+                      onClick={() => {
+                        setActiveTab(tab.id)
+                        setSelectedStaffId(null)
+                        // 責任者がフィードバックタブを開いたら一覧を取得
+                        if (tab.id === 'feedback' && currentUser?.role === 'owner') {
+                          loadFeedbackList()
+                        }
+                      }}
                       className={`flex items-center gap-1 px-2 sm:px-3 py-2 rounded-lg transition-all whitespace-nowrap min-w-0 ${
                         activeTab === tab.id
                           ? 'bg-gradient-to-br from-teal-500 to-emerald-600 text-white'
@@ -1963,31 +1980,62 @@ export default function Home() {
           {/* フィードバック */}
           {activeTab === 'feedback' && (
             <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn">
-              <h2 className="text-xl font-bold">💬 フィードバック</h2>
-              <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
-                <p className="text-slate-400 mb-4 text-sm">
-                  アプリの使い方でわからないこと、改善してほしい機能などがあればお知らせください。
-                  <br />
-                  ※アップデートの反映にはお時間をいただく場合があります。
-                </p>
-                <textarea
-                  value={feedbackContent}
-                  onChange={(e) => setFeedbackContent(e.target.value)}
-                  placeholder="フィードバックを入力してください..."
-                  className="w-full h-32 px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none resize-none"
-                />
-                <div className="flex justify-end mt-4">
-                  <button
-                    onClick={handleSendFeedback}
-                    className="px-6 py-2 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
-                  >
-                    送信
-                  </button>
-                </div>
-                {feedbackSent && (
-                  <p className="text-center text-teal-400 mt-4">✓ フィードバックを送信しました</p>
-                )}
-              </div>
+              {currentUser?.role === 'owner' ? (
+                <>
+                  {/* 責任者: 届いたフィードバック一覧 */}
+                  <h2 className="text-xl font-bold">💬 届いたフィードバック</h2>
+                  {feedbackList.length === 0 ? (
+                    <div className="bg-slate-800/30 rounded-2xl p-6 border border-slate-700/50 text-center">
+                      <p className="text-slate-400">まだフィードバックはありません</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {feedbackList.map(fb => (
+                        <div key={fb.id} className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <span className="font-medium text-white">{fb.user_name || '匿名'}</span>
+                              <span className="text-sm text-slate-500 ml-2">
+                                {new Date(fb.created_at).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-slate-300 whitespace-pre-wrap">{fb.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* 担当者・確認者: フィードバック送信フォーム */}
+                  <h2 className="text-xl font-bold">💬 フィードバック</h2>
+                  <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                    <p className="text-slate-400 mb-4 text-sm">
+                      アプリの使い方でわからないこと、改善してほしい機能などがあればお知らせください。
+                      <br />
+                      ※アップデートの反映にはお時間をいただく場合があります。
+                    </p>
+                    <textarea
+                      value={feedbackContent}
+                      onChange={(e) => setFeedbackContent(e.target.value)}
+                      placeholder="フィードバックを入力してください..."
+                      className="w-full h-32 px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none resize-none"
+                    />
+                    <div className="flex justify-end mt-4">
+                      <button
+                        onClick={handleSendFeedback}
+                        className="px-6 py-2 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                      >
+                        送信
+                      </button>
+                    </div>
+                    {feedbackSent && (
+                      <p className="text-center text-teal-400 mt-4">✓ フィードバックを送信しました</p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </main>
