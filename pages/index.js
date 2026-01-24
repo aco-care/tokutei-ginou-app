@@ -665,8 +665,8 @@ export default function Home() {
 
   // チェックリスト項目の一時的な変更（編集モード中）
   const handleChecklistItemToggle = (itemId) => {
-    if (!checklistEditMode) return
-    
+    if (!editingPhase) return
+
     setPendingChecklistChanges(prev => ({
       ...prev,
       [itemId]: prev[itemId] !== undefined ? !prev[itemId] : !staffChecklists[itemId]?.completed
