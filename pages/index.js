@@ -659,6 +659,42 @@ export default function Home() {
     loadData()
   }
 
+  // フェーズ4: 招待中メンバー削除
+  const handleDeletePendingMember = async (memberId) => {
+    const member = members.find(m => m.id === memberId)
+    if (!member) return
+
+    if (!confirm(`${member.name}さんの招待を取り消しますか？`)) return
+
+    await supabase.from('users').delete().eq('id', memberId)
+    await logActivity('delete', 'users', memberId, member.name, null, null, `${member.name}さんの招待を取り消し`)
+    loadData()
+  }
+
+  // フェーズ4: 招待メール再送信
+  const handleResendInvite = async (member) => {
+    try {
+      const emailRes = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: member.email,
+          name: member.name,
+          role: member.role,
+          inviterName: currentUser?.name || '管理者'
+        })
+      })
+
+      if (emailRes.ok) {
+        alert(`${member.name}さんに招待メールを再送信しました`)
+      } else {
+        alert('メール送信に失敗しました')
+      }
+    } catch (err) {
+      alert('メール送信に失敗しました')
+    }
+  }
+
   // 面談記録追加
   const handleAddInterview = async () => {
     if (!newInterview.date || !newInterview.content) {
@@ -2534,7 +2570,9 @@ export default function Home() {
                   <div key={member.id} className="flex items-center justify-between p-4 bg-slate-900/50 rounded-xl border border-slate-700">
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
-                        member.status === 'disabled' ? 'bg-slate-700' : 'bg-gradient-to-br from-teal-500 to-emerald-600'
+                        member.status === 'disabled' ? 'bg-slate-700' :
+                        member.status === 'pending' ? 'bg-amber-600' :
+                        'bg-gradient-to-br from-teal-500 to-emerald-600'
                       }`}>
                         {member.name?.charAt(0) || '?'}
                       </div>
@@ -2542,25 +2580,42 @@ export default function Home() {
                         <p className={`font-medium ${member.status === 'disabled' ? 'text-slate-500' : 'text-white'}`}>
                           {member.name}
                           {member.id === currentUser?.id && <span className="ml-2 text-xs text-teal-400">（自分）</span>}
+                          {member.status === 'pending' && <span className="ml-2 text-xs text-amber-400">（招待中）</span>}
                         </p>
                         <p className="text-sm text-slate-500">{member.email}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <select
                         value={member.role}
                         onChange={(e) => handleChangeRole(member.id, e.target.value)}
                         disabled={member.id === currentUser?.id}
-                        className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm focus:border-teal-500 focus:outline-none disabled:opacity-50"
+                        className="px-2 sm:px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm focus:border-teal-500 focus:outline-none disabled:opacity-50"
                       >
                         <option value="owner">責任者</option>
                         <option value="admin">担当者</option>
                         <option value="staff">確認者</option>
                       </select>
-                      {member.id !== currentUser?.id && (
+                      {member.id !== currentUser?.id && member.status === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => handleResendInvite(member)}
+                            className="px-2 sm:px-3 py-2 rounded-lg text-sm border border-teal-500/50 text-teal-400 hover:bg-teal-500/10"
+                          >
+                            再送信
+                          </button>
+                          <button
+                            onClick={() => handleDeletePendingMember(member.id)}
+                            className="px-2 sm:px-3 py-2 rounded-lg text-sm border border-rose-500/50 text-rose-400 hover:bg-rose-500/10"
+                          >
+                            削除
+                          </button>
+                        </>
+                      )}
+                      {member.id !== currentUser?.id && member.status !== 'pending' && (
                         <button
                           onClick={() => handleToggleAccountStatus(member.id)}
-                          className={`px-3 py-2 rounded-lg text-sm border ${
+                          className={`px-2 sm:px-3 py-2 rounded-lg text-sm border ${
                             member.status === 'disabled'
                               ? 'border-teal-500/50 text-teal-400 hover:bg-teal-500/10'
                               : 'border-rose-500/50 text-rose-400 hover:bg-rose-500/10'
