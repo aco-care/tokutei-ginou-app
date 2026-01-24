@@ -168,6 +168,8 @@ export default function Home() {
 
   // フェーズ2: 資格取得状況
   const [staffQualifications, setStaffQualifications] = useState({})
+  const [showQualificationDatePicker, setShowQualificationDatePicker] = useState(null) // 資格ID
+  const [qualificationDate, setQualificationDate] = useState('')
 
   // フェーズ4: メンバー管理
   const [showMemberManager, setShowMemberManager] = useState(false)
@@ -1370,7 +1372,16 @@ export default function Home() {
                       <div key={qual.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={() => handleQualificationToggle(qual.id, !status?.acquired)}
+                            onClick={() => {
+                              if (status?.acquired) {
+                                // チェックを外す場合はそのまま
+                                handleQualificationToggle(qual.id, false)
+                              } else {
+                                // チェックを入れる場合は日付入力ダイアログを表示
+                                setQualificationDate(new Date().toISOString().split('T')[0])
+                                setShowQualificationDatePicker(qual.id)
+                              }
+                            }}
                             className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
                               status?.acquired
                                 ? 'bg-teal-500 border-teal-500'
@@ -1392,7 +1403,17 @@ export default function Home() {
                           </div>
                         </div>
                         {status?.acquired && status?.acquired_date && (
-                          <span className="text-sm text-slate-500">{status.acquired_date} 取得</span>
+                          <button
+                            onClick={() => {
+                              if (selectedStaff.status !== 'archived') {
+                                setQualificationDate(status.acquired_date)
+                                setShowQualificationDatePicker(qual.id)
+                              }
+                            }}
+                            className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+                          >
+                            {status.acquired_date} 取得
+                          </button>
                         )}
                       </div>
                     )
@@ -2269,6 +2290,54 @@ export default function Home() {
                   className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
                 >
                   更新
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* フェーズ2: 資格取得日入力モーダル */}
+        {showQualificationDatePicker && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
+              <h3 className="text-xl font-bold mb-4">資格取得日を入力</h3>
+              <div className="space-y-4">
+                <div className="p-3 bg-slate-900/50 rounded-lg">
+                  <span className="text-sm text-slate-400">資格: </span>
+                  <span className="font-medium">{qualificationTypes.find(q => q.id === showQualificationDatePicker)?.name}</span>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">取得日 *</label>
+                  <input
+                    type="date"
+                    value={qualificationDate}
+                    onChange={(e) => setQualificationDate(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                    style={{ colorScheme: 'dark' }}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowQualificationDatePicker(null)
+                    setQualificationDate('')
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={() => {
+                    if (qualificationDate) {
+                      handleQualificationToggle(showQualificationDatePicker, true, qualificationDate)
+                      setShowQualificationDatePicker(null)
+                      setQualificationDate('')
+                    }
+                  }}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                >
+                  保存
                 </button>
               </div>
             </div>
