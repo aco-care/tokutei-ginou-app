@@ -144,6 +144,9 @@ export default function Home() {
   const [feedbackSent, setFeedbackSent] = useState(false)
   const [feedbackList, setFeedbackList] = useState([]) // 責任者用: 届いたフィードバック一覧
 
+  // ダッシュボード: 統計カード展開
+  const [expandedCard, setExpandedCard] = useState(null) // 'staff' | 'expiry' | 'visit' | 'exit' | null
+
   // スタッフメモ
   const [staffMemo, setStaffMemo] = useState('')
   const [memoEditMode, setMemoEditMode] = useState(false)
@@ -193,15 +196,74 @@ export default function Home() {
   const [showContactManager, setShowContactManager] = useState(false)
   const [newContact, setNewContact] = useState({ name: '', role: '', phone: '', email: '', note: '' })
 
+  // お知らせ機能
+  const [announcements, setAnnouncements] = useState([])
+  const [announcementReads, setAnnouncementReads] = useState([])
+  const [showAddAnnouncement, setShowAddAnnouncement] = useState(false)
+  const [newAnnouncement, setNewAnnouncement] = useState({ title: '', content: '', version: '', feedback_user_name: '' })
+
   const [newStaff, setNewStaff] = useState({
     name: '', name_kana: '', nationality: 'ネパール',
     entry_date: '', facility_id: '', facility_ids: []
   })
 
-  // 初期化・認証チェック
+  // 招待受け入れ用state
+  const [inviteMode, setInviteMode] = useState(false)
+  const [inviteUser, setInviteUser] = useState(null)
+  const [invitePassword, setInvitePassword] = useState('')
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState('')
+  const [inviteError, setInviteError] = useState('')
+  const [inviteProcessing, setInviteProcessing] = useState(false)
+  const [showInvitePassword, setShowInvitePassword] = useState(false)
+
+  // 初期化処理
   useEffect(() => {
-    checkAuth()
+    initializeApp()
   }, [])
+
+  const initializeApp = async () => {
+    // まず招待URLかどうかをチェック
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const inviteId = params.get('invite')
+
+      if (inviteId) {
+        console.log('招待ID検出:', inviteId)
+
+        // 招待ユーザーの情報を取得（RLSポリシーでpendingユーザーは匿名でも読み取り可能）
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', inviteId)
+          .single()
+
+        console.log('ユーザー取得結果:', userData, 'エラー:', error)
+
+        if (userData && userData.status === 'pending') {
+          console.log('招待モード開始')
+          setInviteUser(userData)
+          setInviteMode(true)
+          setIsLoading(false)
+          // URLからパラメータを削除（履歴に残さない）
+          window.history.replaceState({}, '', window.location.pathname)
+          return // 招待モードなので認証チェックは不要
+        } else if (userData && userData.status === 'active') {
+          // すでにアクティブ化済み
+          console.log('すでにアクティブ')
+          setInviteError('このアカウントはすでに有効化されています。ログインしてください。')
+        } else {
+          console.log('ユーザーが見つからないか、ステータスが不正:', userData?.status)
+          setInviteError('無効な招待リンクです')
+        }
+
+        // URLからパラメータを削除
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    }
+
+    // 通常の認証チェック
+    await checkAuth()
+  }
 
   const checkAuth = async () => {
     try {
@@ -212,7 +274,7 @@ export default function Home() {
           .select('*')
           .eq('auth_id', session.user.id)
           .single()
-        
+
         if (userData) {
           setCurrentUser(userData)
           setIsLoggedIn(true)
@@ -223,6 +285,89 @@ export default function Home() {
       console.error('Auth check error:', error)
     }
     setIsLoading(false)
+  }
+
+  // 招待受け入れ処理
+  const handleAcceptInvite = async (e) => {
+    e.preventDefault()
+    setInviteError('')
+
+    // パスワード強度チェック（8文字以上、大文字・小文字・数字を含む）
+    if (invitePassword.length < 8) {
+      setInviteError('パスワードは8文字以上で設定してください')
+      return
+    }
+
+    if (!/[A-Z]/.test(invitePassword)) {
+      setInviteError('パスワードには大文字を含めてください')
+      return
+    }
+
+    if (!/[a-z]/.test(invitePassword)) {
+      setInviteError('パスワードには小文字を含めてください')
+      return
+    }
+
+    if (!/[0-9]/.test(invitePassword)) {
+      setInviteError('パスワードには数字を含めてください')
+      return
+    }
+
+    if (invitePassword !== invitePasswordConfirm) {
+      setInviteError('パスワードが一致しません')
+      return
+    }
+
+    setInviteProcessing(true)
+
+    try {
+      // Supabase Authにユーザーを作成
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: inviteUser.email,
+        password: invitePassword
+      })
+
+      if (authError) throw authError
+
+      // usersテーブルを更新（auth_idを紐付け、statusをactiveに）
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          auth_id: authData.user.id,
+          status: 'active'
+        })
+        .eq('id', inviteUser.id)
+
+      if (updateError) throw updateError
+
+      // 自動ログイン
+      const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+        email: inviteUser.email,
+        password: invitePassword
+      })
+
+      if (loginError) throw loginError
+
+      // ユーザー情報を再取得してログイン状態に
+      const { data: userData } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', inviteUser.id)
+        .single()
+
+      if (userData) {
+        setCurrentUser(userData)
+        setIsLoggedIn(true)
+        setInviteMode(false)
+        setInviteUser(null)
+        loadData()
+      }
+    } catch (error) {
+      console.error('Invite accept error:', error)
+      setInviteError('アカウントの作成に失敗しました: ' + error.message)
+    } finally {
+      setInviteProcessing(false)
+    }
   }
 
   const handleLogin = async (e) => {
@@ -296,6 +441,19 @@ export default function Home() {
       .select('*')
       .order('created_at', { ascending: false })
     if (memberData) setMembers(memberData)
+
+    // お知らせ一覧
+    const { data: announcementData } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (announcementData) setAnnouncements(announcementData)
+
+    // お知らせ既読状態
+    const { data: readData } = await supabase
+      .from('announcement_reads')
+      .select('announcement_id')
+    if (readData) setAnnouncementReads(readData.map(r => r.announcement_id))
   }
 
   // スタッフ選択時に面談記録とチェックリストを読み込み
@@ -599,14 +757,19 @@ export default function Home() {
       }
 
       // 招待メール送信
+      const { data: { session } } = await supabase.auth.getSession()
       const emailRes = await fetch('/api/send-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify({
           email: inviteEmail,
           name: inviteName,
           role: inviteRole,
-          inviterName: currentUser?.name || '管理者'
+          inviterName: currentUser?.name || '管理者',
+          userId: data[0].id
         })
       })
 
@@ -675,14 +838,19 @@ export default function Home() {
   // フェーズ4: 招待メール再送信
   const handleResendInvite = async (member) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession()
       const emailRes = await fetch('/api/send-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify({
           email: member.email,
           name: member.name,
           role: member.role,
-          inviterName: currentUser?.name || '管理者'
+          inviterName: currentUser?.name || '管理者',
+          userId: member.id
         })
       })
 
@@ -845,6 +1013,25 @@ export default function Home() {
     })
 
     if (!error) {
+      // フェーズ9: Gmail通知を責任者に送信
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        await fetch('/api/send-feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({
+            content: feedbackContent,
+            userName: currentUser?.name,
+            userEmail: currentUser?.email
+          })
+        })
+      } catch (e) {
+        console.error('Feedback email error:', e)
+      }
+
       setFeedbackSent(true)
       setFeedbackContent('')
       setTimeout(() => setFeedbackSent(false), 3000)
@@ -858,6 +1045,81 @@ export default function Home() {
       .select('*')
       .order('created_at', { ascending: false })
     if (data) setFeedbackList(data)
+  }
+
+  // お知らせ投稿（責任者のみ）
+  const handlePostAnnouncement = async () => {
+    if (!newAnnouncement.title.trim() || !newAnnouncement.content.trim()) return
+
+    const { error } = await supabase.from('announcements').insert({
+      title: newAnnouncement.title,
+      content: newAnnouncement.content,
+      version: newAnnouncement.version || null,
+      feedback_user_name: newAnnouncement.feedback_user_name || null,
+      created_by: currentUser?.id
+    })
+
+    if (!error) {
+      setNewAnnouncement({ title: '', content: '', version: '', feedback_user_name: '' })
+      setShowAddAnnouncement(false)
+      loadData()
+    }
+  }
+
+  // お知らせを既読にする
+  const markAnnouncementAsRead = async (announcementId) => {
+    if (announcementReads.includes(announcementId)) return
+
+    await supabase.from('announcement_reads').insert({
+      announcement_id: announcementId,
+      user_id: currentUser?.id
+    })
+
+    setAnnouncementReads([...announcementReads, announcementId])
+  }
+
+  // 未読お知らせ数を取得
+  const getUnreadAnnouncementCount = () => {
+    return announcements.filter(a => !announcementReads.includes(a.id)).length
+  }
+
+  // フェーズ6: 面談記録CSV出力
+  const handleExportInterviews = () => {
+    if (interviews.length === 0) return
+
+    const staff = staffList.find(s => s.id === selectedStaffId)
+    const typeLabels = {
+      regular: '定期面談',
+      renewal: '更新時面談',
+      exit: '退職時面談',
+      other: 'その他'
+    }
+
+    // CSVヘッダー
+    const headers = ['面談日', '面談種類', '監督者面談', '面談内容', '次のアクション', 'スタッフ名', '事業所']
+
+    // CSVデータ
+    const rows = interviews.map(interview => [
+      interview.interview_date,
+      typeLabels[interview.interview_type] || '面談',
+      interview.supervisor_interview ? 'あり' : 'なし',
+      `"${(interview.content || '').replace(/"/g, '""')}"`,
+      `"${(interview.next_actions || '').replace(/"/g, '""')}"`,
+      staff?.name || '',
+      getFacilityName(staff?.facility_id)
+    ])
+
+    // BOM付きUTF-8でCSV作成
+    const bom = '\uFEFF'
+    const csvContent = bom + [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+
+    // ダウンロード
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `面談記録_${staff?.name || 'unknown'}_${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
   }
 
   // ユーティリティ
@@ -927,6 +1189,208 @@ export default function Home() {
   const archivedStaff = staffList.filter(s => s.status === 'archived')
   const selectedStaff = staffList.find(s => s.id === selectedStaffId)
 
+  // スタッフの現在フェーズと必要なアクションを分析
+  const getStaffStatus = (staff, checklists) => {
+    if (!staff) return null
+
+    const entryDate = staff.entry_date ? new Date(staff.entry_date) : null
+    const now = new Date()
+    const daysSinceEntry = entryDate ? Math.floor((now - entryDate) / (1000 * 60 * 60 * 24)) : 0
+    const daysUntilExpiry = getDaysUntil(staff.residence_expiry)
+
+    // 各フェーズの進捗を計算
+    const getProgress = (phaseKey) => {
+      const phase = checklistDefinitions[phaseKey]
+      if (!phase) return { completed: 0, total: 0, percentage: 0 }
+      const total = phase.items.length
+      const completed = phase.items.filter(item => checklists[item.id]?.completed).length
+      return { completed, total, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 }
+    }
+
+    const prepProgress = getProgress('preparation')
+    const entryProgress = getProgress('entry')
+    const ongoingProgress = getProgress('ongoing')
+    const renewalProgress = getProgress('renewal')
+
+    const warnings = []
+    const nextActions = []
+    let currentPhase = 'preparation'
+    let urgency = 'normal' // 'normal' | 'warning' | 'critical'
+
+    // 入社済みかどうか
+    const hasEntered = entryDate && entryDate <= now
+
+    // 1. 受入れ準備が未完了で入社済み → 警告
+    if (hasEntered && prepProgress.percentage < 100) {
+      warnings.push({
+        type: 'critical',
+        icon: '🚨',
+        message: `受入れ準備が未完了です（${prepProgress.completed}/${prepProgress.total}）`,
+        action: '今すぐ確認',
+        phase: 'preparation'
+      })
+      urgency = 'critical'
+    }
+
+    // 2. 入社済みで入社時届出が未完了 → 警告（14日以内が期限）
+    if (hasEntered && entryProgress.percentage < 100) {
+      const daysRemaining = 14 - daysSinceEntry
+      if (daysRemaining <= 0) {
+        warnings.push({
+          type: 'critical',
+          icon: '⚠️',
+          message: `入社時届出の期限を過ぎています（入社から${daysSinceEntry}日経過）`,
+          action: '至急対応',
+          phase: 'entry'
+        })
+        urgency = 'critical'
+      } else if (daysRemaining <= 7) {
+        warnings.push({
+          type: 'warning',
+          icon: '⏰',
+          message: `入社時届出の期限まで残り${daysRemaining}日（${entryProgress.completed}/${entryProgress.total}完了）`,
+          action: '早めに対応',
+          phase: 'entry'
+        })
+        if (urgency !== 'critical') urgency = 'warning'
+      }
+      currentPhase = 'entry'
+    }
+
+    // 3. 在留期限のアラート
+    if (daysUntilExpiry <= 90 && daysUntilExpiry > 0) {
+      if (renewalProgress.percentage < 100) {
+        if (daysUntilExpiry <= 30) {
+          warnings.push({
+            type: 'critical',
+            icon: '🔴',
+            message: `在留期限まで残り${daysUntilExpiry}日！更新手続きを進めてください`,
+            action: '至急対応',
+            phase: 'renewal'
+          })
+          urgency = 'critical'
+        } else if (daysUntilExpiry <= 60) {
+          warnings.push({
+            type: 'warning',
+            icon: '🟡',
+            message: `在留期限まで残り${daysUntilExpiry}日（更新: ${renewalProgress.completed}/${renewalProgress.total}完了）`,
+            action: '更新手続き',
+            phase: 'renewal'
+          })
+          if (urgency !== 'critical') urgency = 'warning'
+        }
+      }
+    } else if (daysUntilExpiry <= 0) {
+      warnings.push({
+        type: 'critical',
+        icon: '🚨',
+        message: '在留期限が切れています！',
+        action: '至急確認',
+        phase: 'renewal'
+      })
+      urgency = 'critical'
+    }
+
+    // 4. 次のアクションを設定
+    if (prepProgress.percentage < 100) {
+      nextActions.push({ phase: 'preparation', label: '受入れ準備を完了する', icon: '📋' })
+      currentPhase = 'preparation'
+    } else if (entryProgress.percentage < 100 && hasEntered) {
+      nextActions.push({ phase: 'entry', label: '入社時届出を完了する', icon: '🚀' })
+      currentPhase = 'entry'
+    } else if (daysUntilExpiry <= 90 && renewalProgress.percentage < 100) {
+      nextActions.push({ phase: 'renewal', label: '在留期間更新の手続き', icon: '🔄' })
+      currentPhase = 'renewal'
+    } else {
+      currentPhase = 'ongoing'
+    }
+
+    return {
+      currentPhase,
+      warnings,
+      nextActions,
+      urgency,
+      progress: {
+        preparation: prepProgress,
+        entry: entryProgress,
+        ongoing: ongoingProgress,
+        renewal: renewalProgress
+      }
+    }
+  }
+
+  // 全スタッフのタスク状況を取得（ダッシュボード用）
+  const getAllStaffTasks = () => {
+    const tasks = []
+    activeStaff.forEach(staff => {
+      const entryDate = staff.entry_date ? new Date(staff.entry_date) : null
+      const now = new Date()
+      const hasEntered = entryDate && entryDate <= now
+      const daysSinceEntry = entryDate ? Math.floor((now - entryDate) / (1000 * 60 * 60 * 24)) : 0
+      const daysUntilExpiry = getDaysUntil(staff.residence_expiry)
+
+      // 在留期限切れ（最優先）
+      if (daysUntilExpiry <= 0) {
+        tasks.push({
+          staff,
+          type: 'expired',
+          urgency: 'critical',
+          message: `在留期限切れ（${Math.abs(daysUntilExpiry)}日超過）`,
+          icon: '🚨'
+        })
+      }
+      // 在留期限90日以内
+      else if (daysUntilExpiry <= 90) {
+        tasks.push({
+          staff,
+          type: 'renewal',
+          urgency: daysUntilExpiry <= 30 ? 'critical' : 'warning',
+          message: `在留期限（残${daysUntilExpiry}日）`,
+          icon: '🔄'
+        })
+      }
+
+      // 入社時届出期限切れ（14日超過）
+      if (hasEntered && daysSinceEntry > 14) {
+        tasks.push({
+          staff,
+          type: 'entry_overdue',
+          urgency: 'critical',
+          message: `入社時届出 期限超過`,
+          icon: '⚠️'
+        })
+      }
+      // 入社後14日以内の届出チェック
+      else if (hasEntered && daysSinceEntry <= 14 && daysSinceEntry >= 0) {
+        tasks.push({
+          staff,
+          type: 'entry',
+          urgency: daysSinceEntry >= 10 ? 'critical' : 'warning',
+          message: `入社時届出（残${14 - daysSinceEntry}日）`,
+          icon: '🚀'
+        })
+      }
+
+      // 定期面談
+      const nextInterview = getNextInterviewDate(staff)
+      if (nextInterview) {
+        tasks.push({
+          staff,
+          type: 'interview',
+          urgency: 'normal',
+          message: `定期面談（${nextInterview}まで）`,
+          icon: '🗣️'
+        })
+      }
+    })
+
+    // 緊急度でソート
+    return tasks.sort((a, b) => {
+      const urgencyOrder = { critical: 0, warning: 1, normal: 2 }
+      return urgencyOrder[a.urgency] - urgencyOrder[b.urgency]
+    })
+  }
+
   // 1-4: ホームボタン - ダッシュボードに戻る関数
   const goToDashboard = () => {
     setActiveTab('dashboard')
@@ -942,6 +1406,126 @@ export default function Home() {
           <p className="text-slate-400">読み込み中...</p>
         </div>
       </div>
+    )
+  }
+
+  // 招待受け入れ画面
+  if (inviteMode && inviteUser) {
+    const roleLabel = {
+      owner: '責任者',
+      admin: '担当者',
+      staff: '確認者'
+    }[inviteUser.role] || '確認者'
+
+    return (
+      <>
+        <Head>
+          <title>招待を受け入れる | 特定技能 受入れ管理システム</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+          <meta name="theme-color" content="#0f172a" />
+          <link rel="manifest" href="/manifest.json" />
+          <link rel="apple-touch-icon" href="/icon-192.png" />
+        </Head>
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+          <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl p-6 sm:p-8 w-full max-w-md">
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-2xl sm:text-3xl mx-auto mb-4">✉️</div>
+              <h1 className="text-xl sm:text-2xl font-bold text-white mb-2">招待が届いています</h1>
+              <p className="text-slate-400 text-sm">特定技能 受入れ管理システムへようこそ</p>
+            </div>
+
+            <div className="bg-slate-700/50 rounded-xl p-4 mb-6">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-xl text-white font-bold">
+                  {inviteUser.name?.charAt(0) || '?'}
+                </div>
+                <div>
+                  <p className="text-white font-medium text-lg">{inviteUser.name}</p>
+                  <p className="text-slate-400 text-sm">{inviteUser.email}</p>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-slate-600">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 text-sm">あなたの役職:</span>
+                  <span className="px-3 py-1 rounded-full bg-teal-500/20 text-teal-400 text-sm font-medium">{roleLabel}</span>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleAcceptInvite} className="space-y-4" autoComplete="off">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  パスワードを設定
+                </label>
+                <div className="relative">
+                  <input
+                    type={showInvitePassword ? 'text' : 'password'}
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    placeholder="6文字以上"
+                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:border-teal-500 focus:outline-none"
+                    required
+                    minLength={6}
+                    autoFocus
+                    autoComplete="new-password"
+                    name="new-password-invite"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowInvitePassword(!showInvitePassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  >
+                    {showInvitePassword ? '🙈' : '👁️'}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  パスワード（確認）
+                </label>
+                <input
+                  type={showInvitePassword ? 'text' : 'password'}
+                  value={invitePasswordConfirm}
+                  onChange={(e) => setInvitePasswordConfirm(e.target.value)}
+                  placeholder="もう一度入力"
+                  className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:border-teal-500 focus:outline-none"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  name="new-password-confirm"
+                />
+              </div>
+
+              {inviteError && (
+                <div className="bg-rose-500/20 border border-rose-500/50 text-rose-400 px-4 py-3 rounded-xl text-sm">
+                  {inviteError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={inviteProcessing}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-bold text-lg hover:opacity-90 transition disabled:opacity-50"
+              >
+                {inviteProcessing ? '処理中...' : '利用を開始する'}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => {
+                  setInviteMode(false)
+                  setInviteUser(null)
+                }}
+                className="text-slate-500 hover:text-slate-300 text-sm"
+              >
+                キャンセルしてログイン画面へ
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
     )
   }
 
@@ -1076,6 +1660,7 @@ export default function Home() {
                   {[
                     { id: 'dashboard', icon: '📊', label: 'ホーム' },
                     { id: 'staff', icon: '👥', label: 'スタッフ' },
+                    { id: 'announcements', icon: '📢', label: 'お知らせ' },
                     { id: 'help', icon: '❓', label: 'ヘルプ' },
                     { id: 'settings', icon: '⚙️', label: '設定', ownerOnly: true },
                     { id: 'logs', icon: '📜', label: '履歴' },
@@ -1091,7 +1676,7 @@ export default function Home() {
                           loadFeedbackList()
                         }
                       }}
-                      className={`flex items-center gap-1 px-2 sm:px-3 py-2 rounded-lg transition-all whitespace-nowrap min-w-0 ${
+                      className={`relative flex items-center gap-1 px-2 sm:px-3 py-2 rounded-lg transition-all whitespace-nowrap min-w-0 ${
                         activeTab === tab.id
                           ? 'bg-gradient-to-br from-teal-500 to-emerald-600 text-white'
                           : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -1099,6 +1684,12 @@ export default function Home() {
                     >
                       <span className="text-base sm:text-lg">{tab.icon}</span>
                       <span className="text-xs sm:text-sm hidden xs:inline">{tab.label}</span>
+                      {/* お知らせ未読バッジ */}
+                      {tab.id === 'announcements' && getUnreadAnnouncementCount() > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                          {getUnreadAnnouncementCount()}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </nav>
@@ -1125,27 +1716,229 @@ export default function Home() {
           {/* ダッシュボード */}
           {activeTab === 'dashboard' && (
             <div className="space-y-4 sm:space-y-6 animate-fadeIn">
-              {/* 1-1: スマホ対応 - グリッド改善 */}
+              {/* 統計カード - クリックで詳細展開 */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
-                <div className="bg-gradient-to-br from-teal-500/20 to-teal-600/10 border border-teal-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
-                  <div className="text-2xl sm:text-3xl font-bold text-teal-400">{activeStaff.length}</div>
-                  <div className="text-xs sm:text-sm text-slate-400 mt-1">在籍人数</div>
-                </div>
-                <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
-                  <div className="text-2xl sm:text-3xl font-bold text-amber-400">
-                    {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90 && getDaysUntil(s.residence_expiry) > 0).length}
+                {/* 在籍人数カード */}
+                <button
+                  onClick={() => setExpandedCard(expandedCard === 'staff' ? null : 'staff')}
+                  className={`bg-gradient-to-br from-teal-500/20 to-teal-600/10 border rounded-xl sm:rounded-2xl p-3 sm:p-5 text-left transition-all ${
+                    expandedCard === 'staff' ? 'border-teal-400 ring-2 ring-teal-400/30' : 'border-teal-500/30 hover:border-teal-400/50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-2xl sm:text-3xl font-bold text-teal-400">{activeStaff.length}</div>
+                      <div className="text-xs sm:text-sm text-slate-400 mt-1">在籍人数</div>
+                    </div>
+                    <span className={`text-xs transition-transform ${expandedCard === 'staff' ? 'rotate-180' : ''}`}>▼</span>
                   </div>
-                  <div className="text-xs sm:text-sm text-slate-400 mt-1">更新期限90日以内</div>
-                </div>
-                <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
-                  <div className="text-2xl sm:text-3xl font-bold text-purple-400">{activeStaff.filter(s => s.visit_care_ready).length}</div>
-                  <div className="text-xs sm:text-sm text-slate-400 mt-1">訪問系対応可</div>
-                </div>
-                <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-xl sm:rounded-2xl p-3 sm:p-5">
-                  <div className="text-2xl sm:text-3xl font-bold text-rose-400">{activeStaff.filter(s => s.status === 'exiting').length}</div>
-                  <div className="text-xs sm:text-sm text-slate-400 mt-1">退職手続き中</div>
-                </div>
+                </button>
+
+                {/* 更新期限90日以内カード */}
+                <button
+                  onClick={() => setExpandedCard(expandedCard === 'expiry' ? null : 'expiry')}
+                  className={`bg-gradient-to-br from-amber-500/20 to-amber-600/10 border rounded-xl sm:rounded-2xl p-3 sm:p-5 text-left transition-all ${
+                    expandedCard === 'expiry' ? 'border-amber-400 ring-2 ring-amber-400/30' : 'border-amber-500/30 hover:border-amber-400/50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-2xl sm:text-3xl font-bold text-amber-400">
+                        {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90 && getDaysUntil(s.residence_expiry) > 0).length}
+                      </div>
+                      <div className="text-xs sm:text-sm text-slate-400 mt-1">更新期限90日以内</div>
+                    </div>
+                    <span className={`text-xs transition-transform ${expandedCard === 'expiry' ? 'rotate-180' : ''}`}>▼</span>
+                  </div>
+                </button>
+
+                {/* 訪問系対応可カード */}
+                <button
+                  onClick={() => setExpandedCard(expandedCard === 'visit' ? null : 'visit')}
+                  className={`bg-gradient-to-br from-purple-500/20 to-purple-600/10 border rounded-xl sm:rounded-2xl p-3 sm:p-5 text-left transition-all ${
+                    expandedCard === 'visit' ? 'border-purple-400 ring-2 ring-purple-400/30' : 'border-purple-500/30 hover:border-purple-400/50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-2xl sm:text-3xl font-bold text-purple-400">{activeStaff.filter(s => s.visit_care_ready).length}</div>
+                      <div className="text-xs sm:text-sm text-slate-400 mt-1">訪問系対応可</div>
+                    </div>
+                    <span className={`text-xs transition-transform ${expandedCard === 'visit' ? 'rotate-180' : ''}`}>▼</span>
+                  </div>
+                </button>
+
+                {/* 退職手続き中カード */}
+                <button
+                  onClick={() => setExpandedCard(expandedCard === 'exit' ? null : 'exit')}
+                  className={`bg-gradient-to-br from-rose-500/20 to-rose-600/10 border rounded-xl sm:rounded-2xl p-3 sm:p-5 text-left transition-all ${
+                    expandedCard === 'exit' ? 'border-rose-400 ring-2 ring-rose-400/30' : 'border-rose-500/30 hover:border-rose-400/50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-2xl sm:text-3xl font-bold text-rose-400">{activeStaff.filter(s => s.status === 'exiting').length}</div>
+                      <div className="text-xs sm:text-sm text-slate-400 mt-1">退職手続き中</div>
+                    </div>
+                    <span className={`text-xs transition-transform ${expandedCard === 'exit' ? 'rotate-180' : ''}`}>▼</span>
+                  </div>
+                </button>
               </div>
+
+              {/* 統計カード詳細展開エリア */}
+              {expandedCard && (
+                <div className="bg-slate-800/50 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50 animate-fadeIn">
+                  {/* 在籍人数の詳細：事業所別一覧 */}
+                  {expandedCard === 'staff' && (
+                    <>
+                      <h3 className="text-base sm:text-lg font-bold mb-4 text-teal-400">👥 事業所別スタッフ一覧</h3>
+                      <div className="space-y-4">
+                        {facilities.map(facility => {
+                          const facilityStaff = activeStaff.filter(s => s.facility_id === facility.id)
+                          if (facilityStaff.length === 0) return null
+                          return (
+                            <div key={facility.id} className="bg-slate-900/50 rounded-xl p-3 sm:p-4">
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="font-semibold text-white">{facility.name}</span>
+                                <span className="text-teal-400 font-bold">{facilityStaff.length}名</span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {facilityStaff.map(staff => (
+                                  <button
+                                    key={staff.id}
+                                    onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail'); setExpandedCard(null) }}
+                                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm text-slate-300 hover:text-white transition-colors"
+                                  >
+                                    {staff.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {/* 事業所未設定のスタッフ */}
+                        {activeStaff.filter(s => !s.facility_id).length > 0 && (
+                          <div className="bg-slate-900/50 rounded-xl p-3 sm:p-4">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-semibold text-slate-400">事業所未設定</span>
+                              <span className="text-slate-400 font-bold">{activeStaff.filter(s => !s.facility_id).length}名</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {activeStaff.filter(s => !s.facility_id).map(staff => (
+                                <button
+                                  key={staff.id}
+                                  onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail'); setExpandedCard(null) }}
+                                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm text-slate-300 hover:text-white transition-colors"
+                                >
+                                  {staff.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* 更新期限90日以内の詳細 */}
+                  {expandedCard === 'expiry' && (
+                    <>
+                      <h3 className="text-base sm:text-lg font-bold mb-4 text-amber-400">⏰ 更新期限が近いスタッフ</h3>
+                      <div className="space-y-2">
+                        {activeStaff
+                          .filter(s => getDaysUntil(s.residence_expiry) <= 90 && getDaysUntil(s.residence_expiry) > 0)
+                          .sort((a, b) => getDaysUntil(a.residence_expiry) - getDaysUntil(b.residence_expiry))
+                          .map(staff => {
+                            const days = getDaysUntil(staff.residence_expiry)
+                            return (
+                              <button
+                                key={staff.id}
+                                onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail'); setExpandedCard(null) }}
+                                className={`w-full flex justify-between items-center p-3 rounded-lg transition-all ${
+                                  days <= 30 ? 'bg-red-500/20 hover:bg-red-500/30' : 'bg-amber-500/10 hover:bg-amber-500/20'
+                                }`}
+                              >
+                                <div className="text-left">
+                                  <p className="font-medium text-white">{staff.name}</p>
+                                  <p className="text-xs text-slate-400">{getFacilityName(staff.facility_id)}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className={`font-bold ${days <= 30 ? 'text-red-400' : 'text-amber-400'}`}>残{days}日</p>
+                                  <p className="text-xs text-slate-500">{staff.residence_expiry}</p>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90 && getDaysUntil(s.residence_expiry) > 0).length === 0 && (
+                          <p className="text-slate-500 text-center py-4">該当者なし</p>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* 訪問系対応可の詳細：事業所別 */}
+                  {expandedCard === 'visit' && (
+                    <>
+                      <h3 className="text-base sm:text-lg font-bold mb-4 text-purple-400">🏠 訪問系対応可スタッフ（事業所別）</h3>
+                      <div className="space-y-4">
+                        {facilities.map(facility => {
+                          const visitStaff = activeStaff.filter(s => s.visit_care_ready && s.facility_id === facility.id)
+                          if (visitStaff.length === 0) return null
+                          return (
+                            <div key={facility.id} className="bg-slate-900/50 rounded-xl p-3 sm:p-4">
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="font-semibold text-white">{facility.name}</span>
+                                <span className="text-purple-400 font-bold">{visitStaff.length}名</span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {visitStaff.map(staff => (
+                                  <button
+                                    key={staff.id}
+                                    onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail'); setExpandedCard(null) }}
+                                    className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-sm text-purple-300 hover:text-white transition-colors"
+                                  >
+                                    {staff.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {activeStaff.filter(s => s.visit_care_ready).length === 0 && (
+                          <p className="text-slate-500 text-center py-4">訪問系対応可能なスタッフはいません</p>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* 退職手続き中の詳細 */}
+                  {expandedCard === 'exit' && (
+                    <>
+                      <h3 className="text-base sm:text-lg font-bold mb-4 text-rose-400">👋 退職手続き中のスタッフ</h3>
+                      <div className="space-y-2">
+                        {activeStaff
+                          .filter(s => s.status === 'exiting')
+                          .map(staff => (
+                            <button
+                              key={staff.id}
+                              onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail'); setExpandedCard(null) }}
+                              className="w-full flex justify-between items-center p-3 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 transition-all"
+                            >
+                              <div className="text-left">
+                                <p className="font-medium text-white">{staff.name}</p>
+                                <p className="text-xs text-slate-400">{getFacilityName(staff.facility_id)}</p>
+                              </div>
+                              <span className="text-xs px-2 py-1 rounded bg-rose-500/30 text-rose-400">手続き中</span>
+                            </button>
+                          ))}
+                        {activeStaff.filter(s => s.status === 'exiting').length === 0 && (
+                          <p className="text-slate-500 text-center py-4">退職手続き中のスタッフはいません</p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* フェーズ3: 定期届出リマインド */}
               {isAnnualReportPeriod() && (
@@ -1158,46 +1951,68 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="bg-slate-800/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50">
-                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">⚠️ 対応が必要なスタッフ</h2>
-                <div className="space-y-2 sm:space-y-3">
-                  {activeStaff
-                    .filter(s => getDaysUntil(s.residence_expiry) <= 90)
-                    .sort((a, b) => getDaysUntil(a.residence_expiry) - getDaysUntil(b.residence_expiry))
-                    .map(staff => {
-                      const daysUntil = getDaysUntil(staff.residence_expiry)
-                      return (
+              {/* 対応が必要なタスク一覧 */}
+              {(() => {
+                const allTasks = getAllStaffTasks()
+                if (allTasks.length === 0) return (
+                  <div className="bg-teal-500/10 border border-teal-500/30 rounded-xl sm:rounded-2xl p-4 sm:p-6">
+                    <div className="flex items-center gap-3">
+                      <span className="text-3xl">✨</span>
+                      <div>
+                        <h2 className="text-base sm:text-lg font-bold text-teal-400">すべて順調です</h2>
+                        <p className="text-sm text-slate-400">現在、緊急の対応事項はありません</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+                return (
+                  <div className="bg-slate-800/30 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                    <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">
+                      ⚠️ 対応が必要なタスク
+                      <span className="ml-2 px-2 py-0.5 text-sm rounded-full bg-red-500/20 text-red-400">
+                        {allTasks.filter(t => t.urgency === 'critical').length}件 緊急
+                      </span>
+                    </h2>
+                    <div className="space-y-2 sm:space-y-3">
+                      {allTasks.slice(0, 10).map((task, idx) => (
                         <div
-                          key={staff.id}
-                          onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
+                          key={`${task.staff.id}-${task.type}-${idx}`}
+                          onClick={() => { setSelectedStaffId(task.staff.id); setActiveTab('staffDetail') }}
                           className={`flex items-center justify-between p-3 sm:p-4 rounded-xl cursor-pointer transition-all active:scale-[0.99] ${
-                            daysUntil <= 14 ? 'bg-red-500/20 border border-red-500/50 hover:bg-red-500/30' :
-                            daysUntil <= 30 ? 'bg-red-500/10 border border-red-500/30 hover:bg-red-500/20' :
-                            daysUntil <= 60 ? 'bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20' :
-                            'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
+                            task.urgency === 'critical'
+                              ? 'bg-red-500/10 border border-red-500/50 hover:bg-red-500/20'
+                              : task.urgency === 'warning'
+                              ? 'bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20'
+                              : 'bg-slate-700/30 border border-slate-600/30 hover:bg-slate-700/50'
                           }`}
                         >
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-white text-sm sm:text-base truncate">{staff.name}</p>
-                            <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(staff.facility_id)}</p>
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <span className="text-xl flex-shrink-0">{task.icon}</span>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-white text-sm sm:text-base truncate">{task.staff.name}</p>
+                              <p className="text-xs sm:text-sm text-slate-400 truncate">{getFacilityName(task.staff.facility_id)}</p>
+                            </div>
                           </div>
                           <div className="text-right flex-shrink-0 ml-2">
                             <p className={`font-semibold text-sm sm:text-base ${
-                              daysUntil <= 14 ? 'text-red-400' :
-                              daysUntil <= 30 ? 'text-red-400' :
-                              daysUntil <= 60 ? 'text-amber-400' :
-                              'text-yellow-400'
-                            }`}>残{daysUntil}日</p>
-                            <p className="text-xs text-slate-500">{staff.residence_expiry}</p>
+                              task.urgency === 'critical' ? 'text-red-400' :
+                              task.urgency === 'warning' ? 'text-amber-400' : 'text-slate-300'
+                            }`}>{task.message}</p>
+                            <p className="text-xs text-slate-500">
+                              {{entry: '入社時届出', renewal: '在留更新', interview: '定期面談'}[task.type]}
+                            </p>
                           </div>
                         </div>
-                      )
-                    })}
-                  {activeStaff.filter(s => getDaysUntil(s.residence_expiry) <= 90).length === 0 && (
-                    <p className="text-slate-500 text-center py-4 text-sm sm:text-base">現在、緊急の対応事項はありません</p>
-                  )}
-                </div>
-              </div>
+                      ))}
+                      {allTasks.length > 10 && (
+                        <p className="text-center text-sm text-slate-500 py-2">
+                          他 {allTasks.length - 10} 件のタスクがあります
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* フェーズ3: 面談リマインダー */}
               {activeStaff.filter(s => getNextInterviewDate(s)).length > 0 && (
@@ -1250,12 +2065,18 @@ export default function Home() {
                 {(showArchive ? archivedStaff : activeStaff).map(staff => {
                   const daysUntilExpiry = getDaysUntil(staff.residence_expiry)
                   const needsInterview = getNextInterviewDate(staff)
+                  // 入社済みかつ入社時届出期限内かチェック
+                  const entryDate = staff.entry_date ? new Date(staff.entry_date) : null
+                  const hasEntered = entryDate && entryDate <= new Date()
+                  const daysSinceEntry = entryDate ? Math.floor((new Date() - entryDate) / (1000 * 60 * 60 * 24)) : 0
+                  const entryDeadlineWarning = hasEntered && daysSinceEntry <= 14 && daysSinceEntry >= 0
+                  const hasUrgentTask = entryDeadlineWarning || daysUntilExpiry <= 30
 
                   return (
                     <div
                       key={staff.id}
                       className={`bg-slate-800/50 border rounded-2xl p-4 sm:p-5 cursor-pointer hover:border-teal-500/50 transition-all ${
-                        daysUntilExpiry <= 30 ? 'border-red-500/50' :
+                        hasUrgentTask ? 'border-red-500/50' :
                         daysUntilExpiry <= 60 ? 'border-amber-500/50' :
                         daysUntilExpiry <= 90 ? 'border-yellow-500/50' :
                         'border-slate-700/50'
@@ -1290,8 +2111,15 @@ export default function Home() {
                           </div>
                         </div>
                         {/* フェーズ2/3: リマインダー表示 */}
-                        {!showArchive && (daysUntilExpiry <= 90 || needsInterview) && (
+                        {!showArchive && (daysUntilExpiry <= 90 || needsInterview || entryDeadlineWarning) && (
                           <div className="mt-3 space-y-1">
+                            {entryDeadlineWarning && (
+                              <div className={`text-xs px-2 py-1 rounded ${
+                                daysSinceEntry >= 10 ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/10 text-amber-400'
+                              }`}>
+                                🚀 入社時届出（残{14 - daysSinceEntry}日）
+                              </div>
+                            )}
                             {daysUntilExpiry <= 90 && (
                               <div className={`text-xs px-2 py-1 rounded ${
                                 daysUntilExpiry <= 14 ? 'bg-red-500/20 text-red-400' :
@@ -1377,6 +2205,88 @@ export default function Home() {
                   )}
                 </div>
               </div>
+
+              {/* 警告バナー・次のアクション */}
+              {(() => {
+                const status = getStaffStatus(selectedStaff, staffChecklists)
+                if (!status || (status.warnings.length === 0 && status.nextActions.length === 0)) return null
+                return (
+                  <div className="space-y-3">
+                    {/* 警告バナー */}
+                    {status.warnings.map((warning, idx) => (
+                      <div
+                        key={idx}
+                        className={`rounded-xl p-4 border ${
+                          warning.type === 'critical'
+                            ? 'bg-red-500/10 border-red-500/50'
+                            : 'bg-amber-500/10 border-amber-500/50'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="text-2xl flex-shrink-0">{warning.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className={`font-semibold ${warning.type === 'critical' ? 'text-red-400' : 'text-amber-400'}`}>
+                              {warning.message}
+                            </p>
+                            <button
+                              onClick={() => setExpandedPhase(warning.phase)}
+                              className={`mt-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                                warning.type === 'critical'
+                                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                                  : 'bg-amber-500 hover:bg-amber-600 text-white'
+                              }`}
+                            >
+                              {warning.action} →
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* 次のアクション（警告がない場合） */}
+                    {status.warnings.length === 0 && status.nextActions.length > 0 && (
+                      <div className="bg-teal-500/10 border border-teal-500/30 rounded-xl p-4">
+                        <p className="text-sm text-slate-400 mb-2">次のタスク</p>
+                        <div className="flex flex-wrap gap-2">
+                          {status.nextActions.map((action, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => setExpandedPhase(action.phase)}
+                              className="px-4 py-2 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 text-sm font-medium transition-all"
+                            >
+                              {action.icon} {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 進捗サマリー */}
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(status.progress).map(([phase, prog]) => {
+                        if (prog.total === 0) return null
+                        const phaseLabels = { preparation: '準備', entry: '入社', ongoing: '継続', renewal: '更新' }
+                        const isComplete = prog.percentage === 100
+                        return (
+                          <button
+                            key={phase}
+                            onClick={() => setExpandedPhase(phase)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                              isComplete
+                                ? 'bg-teal-500/20 text-teal-400 hover:bg-teal-500/30'
+                                : expandedPhase === phase
+                                ? 'bg-slate-600 text-white'
+                                : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50'
+                            }`}
+                          >
+                            {isComplete ? '✓ ' : ''}{phaseLabels[phase]} {prog.completed}/{prog.total}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* 基本情報 */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
@@ -1609,40 +2519,57 @@ export default function Home() {
                                 </button>
                               </div>
                             )}
-                            {phase.items.map(item => {
-                              const itemChecked = isItemChecked(item.id)
-                              const itemInfo = staffChecklists[item.id]
-                              // 一度きり項目の場合、完了済み項目は編集不可
-                              const itemLocked = phase.lockOnComplete && itemChecked && !isEditing
+                            {(() => {
+                              // 未完了の最初の項目を特定（次のステップ）
+                              const firstIncompleteId = phase.items.find(item => !isItemChecked(item.id))?.id
+                              return phase.items.map(item => {
+                                const itemChecked = isItemChecked(item.id)
+                                const itemInfo = staffChecklists[item.id]
+                                // 一度きり項目の場合、完了済み項目は編集不可
+                                const itemLocked = phase.lockOnComplete && itemChecked && !isEditing
+                                // 次のステップかどうか
+                                const isNextStep = item.id === firstIncompleteId && !isLocked
 
-                              return (
-                                <div
-                                  key={item.id}
-                                  className={`flex items-start gap-3 p-2 rounded-lg transition-all ${
-                                    isEditing && !itemLocked ? 'hover:bg-slate-800 cursor-pointer' : ''
-                                  } ${itemChecked ? 'text-slate-400' : 'text-white'}`}
-                                  onClick={() => isEditing && !itemLocked && handleChecklistItemToggle(item.id)}
-                                >
-                                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                                    itemChecked
-                                      ? 'bg-teal-500 border-teal-500'
-                                      : 'border-slate-600'
-                                  }`}>
-                                    {itemChecked && <span className="text-white text-xs">✓</span>}
+                                return (
+                                  <div
+                                    key={item.id}
+                                    className={`flex items-start gap-3 p-2 rounded-lg transition-all ${
+                                      isEditing && !itemLocked ? 'hover:bg-slate-800 cursor-pointer' : ''
+                                    } ${isNextStep ? 'bg-teal-500/10 border border-teal-500/30' : ''} ${
+                                      itemChecked ? 'text-slate-400' : 'text-white'
+                                    }`}
+                                    onClick={() => isEditing && !itemLocked && handleChecklistItemToggle(item.id)}
+                                  >
+                                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                                      itemChecked
+                                        ? 'bg-teal-500 border-teal-500'
+                                        : isNextStep
+                                        ? 'border-teal-500'
+                                        : 'border-slate-600'
+                                    }`}>
+                                      {itemChecked && <span className="text-white text-xs">✓</span>}
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`text-sm ${itemChecked ? 'line-through' : ''}`}>
+                                          {item.text}
+                                        </span>
+                                        {isNextStep && (
+                                          <span className="text-xs px-2 py-0.5 rounded bg-teal-500/20 text-teal-400 whitespace-nowrap">
+                                            次のステップ
+                                          </span>
+                                        )}
+                                      </div>
+                                      {itemInfo?.completed_at && (
+                                        <p className="text-xs text-slate-500 mt-1">
+                                          {new Date(itemInfo.completed_at).toLocaleDateString('ja-JP')} 完了
+                                        </p>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="flex-1">
-                                    <span className={`text-sm ${itemChecked ? 'line-through' : ''}`}>
-                                      {item.text}
-                                    </span>
-                                    {itemInfo?.completed_at && (
-                                      <p className="text-xs text-slate-500 mt-1">
-                                        {new Date(itemInfo.completed_at).toLocaleDateString('ja-JP')} 完了
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              )
-                            })}
+                                )
+                              })
+                            })()}
                           </div>
                         )}
                       </div>
@@ -1653,13 +2580,24 @@ export default function Home() {
 
               {/* 面談記録 */}
               <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
                   <h3 className="text-lg font-bold">🗣️ 面談記録</h3>
-                  {selectedStaff?.status !== 'archived' && (
-                    <button onClick={() => setShowAddInterview(true)} className="px-3 sm:px-4 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 text-sm">
-                      + 面談記録を追加
-                    </button>
-                  )}
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    {/* フェーズ6: CSV出力ボタン */}
+                    {interviews.length > 0 && (
+                      <button
+                        onClick={() => handleExportInterviews()}
+                        className="flex-1 sm:flex-none px-3 py-2 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 text-sm"
+                      >
+                        📥 CSV出力
+                      </button>
+                    )}
+                    {selectedStaff?.status !== 'archived' && (
+                      <button onClick={() => setShowAddInterview(true)} className="flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg bg-teal-500/20 text-teal-400 border border-teal-500/30 text-sm">
+                        + 面談記録を追加
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-3">
                   {interviews.map(interview => {
@@ -1700,6 +2638,142 @@ export default function Home() {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* お知らせタブ */}
+          {activeTab === 'announcements' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold">📢 システムからのお知らせ</h2>
+                {currentUser?.role === 'owner' && (
+                  <button
+                    onClick={() => setShowAddAnnouncement(true)}
+                    className="px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 rounded-lg text-sm font-medium hover:opacity-90"
+                  >
+                    + 新規投稿
+                  </button>
+                )}
+              </div>
+
+              {/* お知らせ一覧 */}
+              {announcements.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <div className="text-4xl mb-4">📭</div>
+                  <p>まだお知らせはありません</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {announcements.map(announcement => {
+                    const isUnread = !announcementReads.includes(announcement.id)
+                    return (
+                      <div
+                        key={announcement.id}
+                        onClick={() => markAnnouncementAsRead(announcement.id)}
+                        className={`p-4 sm:p-6 rounded-2xl border transition-all cursor-pointer ${
+                          isUnread
+                            ? 'bg-teal-900/20 border-teal-500/50'
+                            : 'bg-slate-800/50 border-slate-700/50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              {isUnread && (
+                                <span className="px-2 py-0.5 bg-teal-500 text-white text-xs rounded-full">
+                                  NEW
+                                </span>
+                              )}
+                              {announcement.version && (
+                                <span className="px-2 py-0.5 bg-slate-700 text-slate-300 text-xs rounded-full">
+                                  {announcement.version}
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-500">
+                                {new Date(announcement.created_at).toLocaleDateString('ja-JP')}
+                              </span>
+                            </div>
+                            <h3 className="font-bold text-lg mb-2">{announcement.title}</h3>
+                            <p className="text-slate-300 whitespace-pre-wrap">{announcement.content}</p>
+                            {announcement.feedback_user_name && (
+                              <p className="text-sm text-teal-400 mt-3">
+                                💡 {announcement.feedback_user_name}さんのご要望を反映しました
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* お知らせ投稿モーダル（責任者のみ） */}
+              {showAddAnnouncement && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                  <div className="bg-slate-900 rounded-2xl p-6 w-full max-w-lg border border-slate-700">
+                    <h3 className="text-lg font-bold mb-4">📢 お知らせを投稿</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm text-slate-400 mb-1">バージョン（任意）</label>
+                        <input
+                          type="text"
+                          placeholder="例: v1.1.0"
+                          value={newAnnouncement.version}
+                          onChange={(e) => setNewAnnouncement({...newAnnouncement, version: e.target.value})}
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-400 mb-1">タイトル *</label>
+                        <input
+                          type="text"
+                          placeholder="例: 新機能を追加しました"
+                          value={newAnnouncement.title}
+                          onChange={(e) => setNewAnnouncement({...newAnnouncement, title: e.target.value})}
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-400 mb-1">内容 *</label>
+                        <textarea
+                          rows={4}
+                          placeholder="お知らせの内容を入力"
+                          value={newAnnouncement.content}
+                          onChange={(e) => setNewAnnouncement({...newAnnouncement, content: e.target.value})}
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg resize-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-400 mb-1">フィードバック提供者（任意）</label>
+                        <input
+                          type="text"
+                          placeholder="例: 田中"
+                          value={newAnnouncement.feedback_user_name}
+                          onChange={(e) => setNewAnnouncement({...newAnnouncement, feedback_user_name: e.target.value})}
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
+                        />
+                        <p className="text-xs text-slate-500 mt-1">入力すると「〇〇さんのご要望を反映しました」と表示されます</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 mt-6">
+                      <button
+                        onClick={() => setShowAddAnnouncement(false)}
+                        className="flex-1 px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600"
+                      >
+                        キャンセル
+                      </button>
+                      <button
+                        onClick={handlePostAnnouncement}
+                        disabled={!newAnnouncement.title.trim() || !newAnnouncement.content.trim()}
+                        className="flex-1 px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 rounded-lg hover:opacity-90 disabled:opacity-50"
+                      >
+                        投稿する
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

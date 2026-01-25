@@ -36,6 +36,7 @@ function escapeHtml(text) {
 
 // メールアドレス形式検証
 function isValidEmail(email) {
+  if (!email) return true // メールは任意
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   return emailRegex.test(email)
 }
@@ -43,7 +44,7 @@ function isValidEmail(email) {
 // レート制限用（簡易版：メモリベース）
 const rateLimitMap = new Map()
 const RATE_LIMIT_WINDOW = 60 * 1000 // 1分
-const RATE_LIMIT_MAX = 5 // 1分あたり5回まで
+const RATE_LIMIT_MAX = 3 // 1分あたり3回まで
 
 function checkRateLimit(ip) {
   const now = Date.now()
@@ -92,83 +93,53 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: '認証に失敗しました' })
   }
 
-  // ユーザーの権限確認（owner または admin のみ招待可能）
-  const { data: userData, error: userError } = await supabase
-    .from('users')
-    .select('role')
-    .eq('auth_id', user.id)
-    .single()
-
-  if (userError || !userData || !['owner', 'admin'].includes(userData.role)) {
-    return res.status(403).json({ error: '招待を送信する権限がありません' })
-  }
-
-  const { email, name, role, inviterName, userId } = req.body
+  const { content, userName, userEmail } = req.body
 
   // 入力検証
-  if (!email || !name) {
-    return res.status(400).json({ error: 'メールアドレスと名前は必須です' })
+  if (!content) {
+    return res.status(400).json({ error: 'フィードバック内容は必須です' })
   }
 
-  if (!isValidEmail(email)) {
-    return res.status(400).json({ error: '有効なメールアドレスを入力してください' })
+  if (content.length > 5000) {
+    return res.status(400).json({ error: 'フィードバックは5000文字以内で入力してください' })
   }
 
-  if (name.length > 100 || (inviterName && inviterName.length > 100)) {
+  if (userName && userName.length > 100) {
     return res.status(400).json({ error: '名前は100文字以内で入力してください' })
   }
 
-  const validRoles = ['owner', 'admin', 'staff']
-  if (role && !validRoles.includes(role)) {
-    return res.status(400).json({ error: '無効な役職が指定されました' })
+  if (userEmail && !isValidEmail(userEmail)) {
+    return res.status(400).json({ error: '有効なメールアドレスを入力してください' })
   }
 
-  // UUID形式チェック
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (userId && !uuidRegex.test(userId)) {
-    return res.status(400).json({ error: '無効なユーザーIDです' })
-  }
-
-  const roleLabel = {
-    owner: '責任者',
-    admin: '担当者',
-    staff: '確認者'
-  }[role] || '確認者'
-
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tokutei-ginou-app.vercel.app'
-  const inviteUrl = `${baseUrl}?invite=${userId}`
-
-  // HTMLエスケープを適用
-  const safeName = escapeHtml(name)
-  const safeInviterName = escapeHtml(inviterName)
-  const safeRoleLabel = escapeHtml(roleLabel)
-
-  // 送信元メールアドレス
+  // 責任者のメールアドレス（環境変数から取得）
+  const ownerEmail = process.env.OWNER_EMAIL || process.env.GMAIL_USER
   const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.GMAIL_USER
   const fromName = '特定技能 受入れ管理'
+
+  // HTMLエスケープを適用
+  const safeContent = escapeHtml(content)
+  const safeUserName = escapeHtml(userName) || '匿名'
+  const safeUserEmail = escapeHtml(userEmail)
 
   const htmlContent = `
     <div style="font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8fafc;">
       <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 30px; border-radius: 16px 16px 0 0;">
-        <h1 style="color: #14b8a6; margin: 0; font-size: 24px;">特定技能 受入れ管理システム</h1>
-        <p style="color: #94a3b8; margin: 10px 0 0 0; font-size: 14px;">介護分野の外国人材管理を効率化</p>
+        <h1 style="color: #14b8a6; margin: 0; font-size: 24px;">フィードバックが届きました</h1>
+        <p style="color: #94a3b8; margin: 10px 0 0 0; font-size: 14px;">特定技能 受入れ管理システム</p>
       </div>
       <div style="background: white; padding: 30px; border-radius: 0 0 16px 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-        <p style="color: #334155; font-size: 16px; margin: 0 0 20px 0;">${safeName}さん</p>
-        <p style="color: #334155; font-size: 16px; margin: 0 0 20px 0;">${safeInviterName}さんから「特定技能 受入れ管理システム」への招待が届いています。</p>
-        <div style="background: #f1f5f9; padding: 20px; border-radius: 12px; margin: 20px 0;">
-          <p style="margin: 0; color: #475569;"><strong>あなたの役職:</strong> <span style="color: #14b8a6; font-weight: bold;">${safeRoleLabel}</span></p>
+        <div style="background: #f1f5f9; padding: 20px; border-radius: 12px; margin: 0 0 20px 0;">
+          <p style="margin: 0 0 10px 0; color: #475569;"><strong>送信者:</strong> ${safeUserName}</p>
+          ${safeUserEmail ? `<p style="margin: 0 0 10px 0; color: #475569;"><strong>メール:</strong> ${safeUserEmail}</p>` : ''}
+          <p style="margin: 0; color: #475569;"><strong>日時:</strong> ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</p>
         </div>
-        <p style="color: #334155; font-size: 16px; margin: 20px 0;">以下のボタンからパスワードを設定してご利用ください：</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${inviteUrl}" style="display: inline-block; background: linear-gradient(135deg, #14b8a6 0%, #10b981 100%); color: white; padding: 16px 32px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; box-shadow: 0 4px 14px rgba(20, 184, 166, 0.4);">
-            パスワードを設定してはじめる
-          </a>
+        <div style="background: #ffffff; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+          <p style="margin: 0; color: #334155; white-space: pre-wrap; line-height: 1.6;">${safeContent}</p>
         </div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
         <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-          ※このメールに心当たりがない場合は、無視してください。<br />
-          ※このメールは自動送信されています。返信はできません。
+          特定技能 受入れ管理システムより自動送信
         </p>
       </div>
     </div>
@@ -179,16 +150,16 @@ export default async function handler(req, res) {
       // Resendで送信（推奨）
       await resend.emails.send({
         from: `${fromName} <${fromEmail}>`,
-        to: email,
-        subject: `【特定技能 受入れ管理】${safeInviterName}さんから招待が届いています`,
+        to: ownerEmail,
+        subject: `【フィードバック】${safeUserName}さんからのご意見`,
         html: htmlContent
       })
     } else if (nodemailerTransporter) {
       // フォールバック：nodemailerで送信
       await nodemailerTransporter.sendMail({
         from: `"${fromName}" <${fromEmail}>`,
-        to: email,
-        subject: `【特定技能 受入れ管理】${safeInviterName}さんから招待が届いています`,
+        to: ownerEmail,
+        subject: `【フィードバック】${safeUserName}さんからのご意見`,
         html: htmlContent
       })
     } else {
