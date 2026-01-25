@@ -257,6 +257,17 @@ export default function Home() {
   const [showAddAnnouncement, setShowAddAnnouncement] = useState(false)
   const [newAnnouncement, setNewAnnouncement] = useState({ title: '', content: '', version: '', feedback_user_name: '' })
 
+  // 協議会登録状況
+  const [councilRegistrations, setCouncilRegistrations] = useState({})
+  const [showCouncilEdit, setShowCouncilEdit] = useState(false)
+  const [councilEditData, setCouncilEditData] = useState({
+    is_registered: false,
+    registered_at: '',
+    registration_number: '',
+    last_updated_at: '',
+    memo: ''
+  })
+
   const [newStaff, setNewStaff] = useState({
     name: '', name_kana: '', nationality: 'ネパール',
     entry_date: '', facility_id: '', facility_ids: [],
@@ -510,6 +521,18 @@ export default function Home() {
       .from('announcement_reads')
       .select('announcement_id')
     if (readData) setAnnouncementReads(readData.map(r => r.announcement_id))
+
+    // 協議会登録状況（全スタッフ）
+    const { data: councilData } = await supabase
+      .from('council_registrations')
+      .select('*')
+    if (councilData) {
+      const councilMap = {}
+      councilData.forEach(c => {
+        councilMap[c.staff_id] = c
+      })
+      setCouncilRegistrations(councilMap)
+    }
   }
 
   // スタッフ選択時に面談記録とチェックリストを読み込み
@@ -577,6 +600,45 @@ export default function Home() {
     } else {
       setStaffQualifications({})
     }
+
+    // 協議会登録状況
+    const { data: councilData } = await supabase
+      .from('council_registrations')
+      .select('*')
+      .eq('staff_id', staffId)
+      .single()
+    if (councilData) {
+      setCouncilRegistrations(prev => ({ ...prev, [staffId]: councilData }))
+    }
+  }
+
+  // 協議会登録状況を保存
+  const handleSaveCouncilRegistration = async () => {
+    if (!selectedStaffId) return
+
+    const data = {
+      staff_id: selectedStaffId,
+      is_registered: councilEditData.is_registered,
+      registered_at: councilEditData.registered_at || null,
+      registration_number: councilEditData.registration_number || null,
+      last_updated_at: councilEditData.last_updated_at || null,
+      memo: councilEditData.memo || null
+    }
+
+    // upsert: 存在すれば更新、なければ挿入
+    const { error } = await supabase
+      .from('council_registrations')
+      .upsert(data, { onConflict: 'staff_id' })
+
+    if (error) {
+      alert('エラー: ' + error.message)
+      return
+    }
+
+    // 状態を更新
+    setCouncilRegistrations(prev => ({ ...prev, [selectedStaffId]: data }))
+    setShowCouncilEdit(false)
+    await logActivity('update', 'council_registrations', selectedStaffId, selectedStaff?.name, null, data, `${selectedStaff?.name}さんの協議会登録状況を更新`)
   }
 
   // 操作ログ記録
@@ -1846,6 +1908,38 @@ export default function Home() {
                 </button>
               </div>
 
+              {/* 協議会未登録アラート */}
+              {(() => {
+                const unregisteredStaff = activeStaff.filter(s => !councilRegistrations[s.id]?.is_registered)
+                if (unregisteredStaff.length === 0) return null
+                return (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl sm:rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">⚠️</span>
+                      <div className="flex-1">
+                        <h3 className="font-bold text-red-400">協議会未登録: {unregisteredStaff.length}名</h3>
+                        <p className="text-sm text-slate-400 mt-1">協議会への登録が確認できていません。在留資格の更新に影響する可能性があります。</p>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {unregisteredStaff.slice(0, 5).map(staff => (
+                            <button
+                              key={staff.id}
+                              onClick={() => { setSelectedStaffId(staff.id); setActiveTab('staffDetail') }}
+                              className="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/30 text-sm text-red-300 hover:bg-red-500/30 transition-colors"
+                            >
+                              {staff.name}
+                              <span className="ml-1 text-xs text-red-400">({sectorDefinitions[staff.sector || 'kaigo']?.name})</span>
+                            </button>
+                          ))}
+                          {unregisteredStaff.length > 5 && (
+                            <span className="px-3 py-1.5 text-sm text-slate-500">他{unregisteredStaff.length - 5}名</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
               {/* 統計カード詳細展開エリア */}
               {expandedCard && (
                 <div className="bg-slate-800/50 rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-slate-700/50 animate-fadeIn">
@@ -2495,6 +2589,80 @@ export default function Home() {
                     <p className="text-sm text-slate-400 mt-1">初任者研修修了 + 実務経験1年以上</p>
                   </div>
                 )}
+              </div>
+
+              {/* 協議会登録状況 */}
+              <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold">🏛️ 協議会登録状況</h3>
+                  {selectedStaff?.status !== 'archived' && (
+                    <button
+                      onClick={() => {
+                        const current = councilRegistrations[selectedStaffId] || {}
+                        setCouncilEditData({
+                          is_registered: current.is_registered || false,
+                          registered_at: current.registered_at || '',
+                          registration_number: current.registration_number || '',
+                          last_updated_at: current.last_updated_at || '',
+                          memo: current.memo || ''
+                        })
+                        setShowCouncilEdit(true)
+                      }}
+                      className="px-3 py-1 rounded-lg text-sm border border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 transition-all"
+                    >
+                      編集
+                    </button>
+                  )}
+                </div>
+                {(() => {
+                  const council = councilRegistrations[selectedStaffId]
+                  const sectorInfo = sectorDefinitions[selectedStaff?.sector || 'kaigo']
+                  return (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
+                        <div className="text-sm text-slate-400 mb-1">対象協議会</div>
+                        <div className="font-medium">{sectorInfo?.council}</div>
+                        <div className="text-xs text-slate-500">{sectorInfo?.ministry}</div>
+                      </div>
+                      <div className={`p-4 rounded-xl border ${
+                        council?.is_registered
+                          ? 'bg-teal-500/10 border-teal-500/30'
+                          : 'bg-red-500/10 border-red-500/30'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{council?.is_registered ? '✅' : '⚠️'}</span>
+                          <div>
+                            <div className={`font-bold ${council?.is_registered ? 'text-teal-400' : 'text-red-400'}`}>
+                              {council?.is_registered ? '登録済み' : '未登録'}
+                            </div>
+                            {council?.is_registered && council?.registered_at && (
+                              <div className="text-sm text-slate-400">登録日: {council.registered_at}</div>
+                            )}
+                            {!council?.is_registered && (
+                              <div className="text-sm text-red-400">協議会への登録が必要です</div>
+                            )}
+                          </div>
+                        </div>
+                        {council?.registration_number && (
+                          <div className="mt-2 text-sm text-slate-400">
+                            登録番号: {council.registration_number}
+                          </div>
+                        )}
+                      </div>
+                      {council?.last_updated_at && (
+                        <div className="text-sm text-slate-500">
+                          最終情報更新: {council.last_updated_at}
+                        </div>
+                      )}
+                      {council?.memo && (
+                        <div className="p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
+                          <div className="text-sm text-slate-400 mb-1">メモ</div>
+                          <div className="text-sm whitespace-pre-wrap">{council.memo}</div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* フェーズ2: 在留期限更新履歴 */}
@@ -3645,6 +3813,94 @@ export default function Home() {
                       setQualificationDate('')
                     }
                   }}
+                  className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 協議会登録状況編集モーダル */}
+        {showCouncilEdit && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-bold mb-4">🏛️ 協議会登録状況を編集</h3>
+              <div className="space-y-4">
+                <div className="p-3 bg-slate-900/50 rounded-lg">
+                  <span className="text-sm text-slate-400">対象: </span>
+                  <span className="font-medium">{selectedStaff?.name}</span>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {sectorDefinitions[selectedStaff?.sector || 'kaigo']?.council}
+                  </div>
+                </div>
+                <div>
+                  <label className="flex items-center gap-3 cursor-pointer p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={councilEditData.is_registered}
+                      onChange={(e) => setCouncilEditData(prev => ({ ...prev, is_registered: e.target.checked }))}
+                      className="w-5 h-5 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
+                    />
+                    <span className="font-medium">協議会に登録済み</span>
+                  </label>
+                </div>
+                {councilEditData.is_registered && (
+                  <>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">登録日</label>
+                      <input
+                        type="date"
+                        value={councilEditData.registered_at}
+                        onChange={(e) => setCouncilEditData(prev => ({ ...prev, registered_at: e.target.value }))}
+                        className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                        style={{ colorScheme: 'dark' }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">登録番号（任意）</label>
+                      <input
+                        type="text"
+                        value={councilEditData.registration_number}
+                        onChange={(e) => setCouncilEditData(prev => ({ ...prev, registration_number: e.target.value }))}
+                        className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                        placeholder="例: K-12345"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-1">最終情報更新日</label>
+                      <input
+                        type="date"
+                        value={councilEditData.last_updated_at}
+                        onChange={(e) => setCouncilEditData(prev => ({ ...prev, last_updated_at: e.target.value }))}
+                        className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none"
+                        style={{ colorScheme: 'dark' }}
+                      />
+                      <p className="text-xs text-slate-500 mt-1">協議会システムで情報を更新した日</p>
+                    </div>
+                  </>
+                )}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">メモ（任意）</label>
+                  <textarea
+                    value={councilEditData.memo}
+                    onChange={(e) => setCouncilEditData(prev => ({ ...prev, memo: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none resize-none"
+                    rows={3}
+                    placeholder="備考など"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowCouncilEdit(false)}
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleSaveCouncilRegistration}
                   className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
                 >
                   保存
