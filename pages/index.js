@@ -2436,7 +2436,7 @@ export default function Home() {
               <div className="bg-slate-800/30 rounded-2xl p-4 sm:p-6 border border-slate-700/50">
                 <h3 className="text-lg font-bold mb-4">🎓 資格取得状況</h3>
                 <div className="space-y-3">
-                  {qualificationTypes.map(qual => {
+                  {(qualificationTypes[selectedStaff?.sector] || qualificationTypes.kaigo).map(qual => {
                     const status = staffQualifications[qual.id]
                     return (
                       <div key={qual.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-xl border border-slate-700/50">
@@ -3614,7 +3614,7 @@ export default function Home() {
               <div className="space-y-4">
                 <div className="p-3 bg-slate-900/50 rounded-lg">
                   <span className="text-sm text-slate-400">資格: </span>
-                  <span className="font-medium">{qualificationTypes.find(q => q.id === showQualificationDatePicker)?.name}</span>
+                  <span className="font-medium">{(qualificationTypes[selectedStaff?.sector] || qualificationTypes.kaigo).find(q => q.id === showQualificationDatePicker)?.name}</span>
                 </div>
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">取得日 *</label>
