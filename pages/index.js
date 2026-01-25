@@ -2905,7 +2905,7 @@ export default function Home() {
                         <span className="text-xs text-slate-500 block">厚生労働省</span>
                       </button>
                       <button
-                        onClick={() => window.open('https://www.maff.go.jp/j/shokusan/sanki/soumu/tokuteigino.html', '_blank')}
+                        onClick={() => window.open('https://www.maff.go.jp/j/shokusan/sanki/soumu/kyougikai.html', '_blank')}
                         className="block w-full text-left px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 hover:bg-orange-500/20 transition-all"
                       >
                         <span className="text-sm text-orange-400">外食業分野</span>
