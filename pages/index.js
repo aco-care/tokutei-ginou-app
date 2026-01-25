@@ -1220,16 +1220,18 @@ export default function Home() {
 
   // チェックリストの進捗計算
   const getPhaseProgress = (phaseKey) => {
-    const phase = checklistDefinitions[phaseKey]
+    // 選択中のスタッフの分野に応じたチェックリストを使用
+    const definitions = getChecklistDefinitions(selectedStaff?.sector)
+    const phase = definitions[phaseKey]
     if (!phase) return { completed: 0, total: 0, percentage: 0 }
-    
+
     const total = phase.items.length
     const completed = phase.items.filter(item => {
       const pending = pendingChecklistChanges[item.id]
       if (pending !== undefined) return pending
       return staffChecklists[item.id]?.completed
     }).length
-    
+
     return {
       completed,
       total,
@@ -1256,9 +1258,10 @@ export default function Home() {
     const daysSinceEntry = entryDate ? Math.floor((now - entryDate) / (1000 * 60 * 60 * 24)) : 0
     const daysUntilExpiry = getDaysUntil(staff.residence_expiry)
 
-    // 各フェーズの進捗を計算
+    // 各フェーズの進捗を計算（スタッフの分野に応じたチェックリストを使用）
+    const definitions = getChecklistDefinitions(staff.sector)
     const getProgress = (phaseKey) => {
-      const phase = checklistDefinitions[phaseKey]
+      const phase = definitions[phaseKey]
       if (!phase) return { completed: 0, total: 0, percentage: 0 }
       const total = phase.items.length
       const completed = phase.items.filter(item => checklists[item.id]?.completed).length
