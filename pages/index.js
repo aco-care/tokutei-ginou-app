@@ -8,18 +8,42 @@ const defaultNationalities = [
   'カンボジア', 'タイ', '中国', 'モンゴル', 'スリランカ', 'バングラデシュ'
 ]
 
-// 資格リスト（フェーズ2: 資格取得状況管理）
-const qualificationTypes = [
-  { id: 'shoninsya', name: '初任者研修', required_for_visit: true },
-  { id: 'jitsumukensyu', name: '実務者研修', required_for_visit: false },
-  { id: 'kaigofukushishi', name: '介護福祉士', required_for_visit: false },
-]
+// 分野（セクター）定義
+const sectorDefinitions = {
+  kaigo: {
+    name: '介護',
+    council: '介護分野における特定技能協議会',
+    ministry: '厚生労働省',
+    has2gou: false, // 特定技能2号なし（介護福祉士で在留資格変更）
+    hasVisitCare: true,
+  },
+  gaishoku: {
+    name: '外食業',
+    council: '食品産業特定技能協議会',
+    ministry: '農林水産省',
+    has2gou: true, // 特定技能2号あり（2023年〜）
+    hasVisitCare: false,
+  }
+}
 
-// チェックリスト定義（フェーズ5: 一度きり項目のロック対応）
-const checklistDefinitions = {
+// 資格リスト（分野別）
+const qualificationTypes = {
+  kaigo: [
+    { id: 'shoninsya', name: '初任者研修', required_for_visit: true },
+    { id: 'jitsumukensyu', name: '実務者研修', required_for_visit: false },
+    { id: 'kaigofukushishi', name: '介護福祉士', required_for_visit: false },
+  ],
+  gaishoku: [
+    { id: 'chourishi', name: '調理師', required_for_visit: false },
+    { id: 'eiseikanrisha', name: '食品衛生責任者', required_for_visit: false },
+  ]
+}
+
+// チェックリスト定義（分野共通）
+const checklistDefinitionsBase = {
   preparation: {
     title: '受入れ準備', icon: '📋',
-    lockOnComplete: true, // 一度きり項目：完了後ロック
+    lockOnComplete: true,
     items: [
       { id: 'p1', text: '外国人材の資格要件を確認した' },
       { id: 'p2', text: '協議会に入会申請した' },
@@ -34,7 +58,7 @@ const checklistDefinitions = {
   },
   entry: {
     title: '入社時届出', icon: '🚀',
-    lockOnComplete: true, // 一度きり項目：完了後ロック
+    lockOnComplete: true,
     items: [
       { id: 'e1', text: '入管への届出を行った' },
       { id: 'e2', text: '協議会への登録を行った' },
@@ -47,7 +71,7 @@ const checklistDefinitions = {
   },
   ongoing: {
     title: '在籍中（定期）', icon: '📅',
-    lockOnComplete: false, // 定期的な項目：ロックしない
+    lockOnComplete: false,
     items: [
       { id: 'o1', text: '定期面談を実施した（3ヶ月に1回）' },
       { id: 'o2', text: '定期届出を行った（年1回：4〜5月）' },
@@ -57,7 +81,7 @@ const checklistDefinitions = {
   },
   renewal: {
     title: '在留期間更新', icon: '🔄',
-    lockOnComplete: false, // 複数回実施可能
+    lockOnComplete: false,
     items: [
       { id: 'r1', text: '在留期限を確認した' },
       { id: 'r2', text: '協議会証明書の期限を確認した' },
@@ -66,9 +90,26 @@ const checklistDefinitions = {
       { id: 'r5', text: '新しい在留カードを受領した' },
     ]
   },
+  exit: {
+    title: '退職手続き', icon: '👋',
+    lockOnComplete: true,
+    items: [
+      { id: 'x1', text: '退職日を確定した' },
+      { id: 'x2', text: '入管へ届出した（14日以内）' },
+      { id: 'x3', text: '受入れ困難の届出をした' },
+      { id: 'x4', text: '協議会へ報告した' },
+      { id: 'x5', text: 'ハローワークへ届出した（10日以内）' },
+      { id: 'x6', text: '社会保険の資格喪失届を提出した' },
+    ]
+  }
+}
+
+// 介護分野専用チェックリスト
+const checklistDefinitionsKaigo = {
+  ...checklistDefinitionsBase,
   visitCare: {
     title: '訪問系サービス従事', icon: '🏠',
-    lockOnComplete: true, // 一度きり項目
+    lockOnComplete: true,
     items: [
       { id: 'v1', text: '初任者研修を修了している' },
       { id: 'v2', text: '実務経験1年以上ある' },
@@ -83,20 +124,34 @@ const checklistDefinitions = {
       { id: 'v11', text: '協議会情報を更新した' },
       { id: 'v12', text: '利用者に説明し同意を得た' },
     ]
-  },
-  exit: {
-    title: '退職手続き', icon: '👋',
-    lockOnComplete: true, // 一度きり項目
+  }
+}
+
+// 外食業分野専用チェックリスト（訪問系サービスなし、衛生管理あり）
+const checklistDefinitionsGaishoku = {
+  ...checklistDefinitionsBase,
+  hygiene: {
+    title: '衛生管理', icon: '🧼',
+    lockOnComplete: false,
     items: [
-      { id: 'x1', text: '退職日を確定した' },
-      { id: 'x2', text: '入管へ届出した（14日以内）' },
-      { id: 'x3', text: '受入れ困難の届出をした' },
-      { id: 'x4', text: '協議会へ報告した' },
-      { id: 'x5', text: 'ハローワークへ届出した（10日以内）' },
-      { id: 'x6', text: '社会保険の資格喪失届を提出した' },
+      { id: 'h1', text: '食品衛生責任者を選任した' },
+      { id: 'h2', text: '衛生管理マニュアルを整備した' },
+      { id: 'h3', text: '衛生講習を受講させた' },
+      { id: 'h4', text: '健康診断（検便含む）を実施した' },
     ]
   }
 }
+
+// 分野に応じたチェックリスト定義を取得
+const getChecklistDefinitions = (sector) => {
+  if (sector === 'gaishoku') {
+    return checklistDefinitionsGaishoku
+  }
+  return checklistDefinitionsKaigo // デフォルトは介護
+}
+
+// 後方互換性のため（既存コードで使用している場合）
+const checklistDefinitions = checklistDefinitionsKaigo
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -204,7 +259,8 @@ export default function Home() {
 
   const [newStaff, setNewStaff] = useState({
     name: '', name_kana: '', nationality: 'ネパール',
-    entry_date: '', facility_id: '', facility_ids: []
+    entry_date: '', facility_id: '', facility_ids: [],
+    sector: 'kaigo' // デフォルトは介護
   })
 
   // 招待受け入れ用state
@@ -565,7 +621,8 @@ export default function Home() {
       facility_ids: newStaff.facility_ids || [],
       residence_expiry: residenceExpiry.toISOString().split('T')[0],
       status: 'active',
-      current_phase: 'preparation'
+      current_phase: 'preparation',
+      sector: newStaff.sector || 'kaigo'
     }
 
     const { data, error } = await supabase.from('foreign_staff').insert(staffData).select()
@@ -579,7 +636,7 @@ export default function Home() {
       await logActivity('create', 'foreign_staff', data[0].id, newStaff.name, null, staffData, `${newStaff.name}さんを追加`)
       loadData()
       setShowAddStaff(false)
-      setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '', facility_ids: [] })
+      setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '', facility_ids: [], sector: 'kaigo' })
     }
   }
 
@@ -601,7 +658,8 @@ export default function Home() {
         entry_date: editingStaff.entry_date,
         facility_id: editingStaff.facility_id,
         facility_ids: editingStaff.facility_ids || [],
-        visit_care_ready: editingStaff.visit_care_ready
+        visit_care_ready: editingStaff.visit_care_ready,
+        sector: editingStaff.sector || 'kaigo'
       })
       .eq('id', editingStaff.id)
 
@@ -1553,9 +1611,9 @@ export default function Home() {
           
           <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-2xl p-6 sm:p-8 w-full max-w-md">
             <div className="text-center mb-6 sm:mb-8">
-              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-2xl sm:text-3xl mx-auto mb-4">🏥</div>
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-2xl sm:text-3xl mx-auto mb-4">🏢</div>
               <h1 className="text-xl sm:text-2xl font-bold text-white">特定技能 受入れ管理</h1>
-              <p className="text-slate-400 mt-2 text-sm sm:text-base">介護分野</p>
+              <p className="text-slate-400 mt-2 text-sm sm:text-base">介護・外食業</p>
             </div>
             
             <form onSubmit={handleLogin} className="space-y-4">
@@ -1647,10 +1705,10 @@ export default function Home() {
                 onClick={goToDashboard}
                 className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity flex-shrink-0"
               >
-                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-lg sm:text-xl">🏥</div>
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-lg sm:text-xl">🏢</div>
                 <div className="hidden sm:block">
                   <h1 className="text-base sm:text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-400">特定技能 受入れ管理</h1>
-                  <p className="text-xs text-slate-500">介護分野</p>
+                  <p className="text-xs text-slate-500">介護・外食業</p>
                 </div>
               </button>
               
@@ -2088,10 +2146,17 @@ export default function Home() {
                             <h3 className="text-lg font-bold">{staff.name}</h3>
                             <p className="text-sm text-slate-400">
                               {getFacilityName(staff.facility_id)}
-                              {staff.visit_care_ready && <span className="ml-2 text-xs text-purple-400">🏠訪問可</span>}
+                              {staff.visit_care_ready && (staff.sector || 'kaigo') === 'kaigo' && <span className="ml-2 text-xs text-purple-400">🏠訪問可</span>}
                             </p>
                           </div>
-                          <span className="px-3 py-1 rounded-full text-xs bg-slate-700">{staff.nationality}</span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                              (staff.sector || 'kaigo') === 'kaigo' ? 'bg-teal-500/20 text-teal-400' : 'bg-orange-500/20 text-orange-400'
+                            }`}>
+                              {sectorDefinitions[staff.sector || 'kaigo']?.name}
+                            </span>
+                            <span className="px-3 py-1 rounded-full text-xs bg-slate-700">{staff.nationality}</span>
+                          </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3 text-sm">
                           <div>
@@ -2172,7 +2237,14 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="flex-1">
-                  <h2 className="text-xl sm:text-2xl font-bold">{selectedStaff.name}</h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-xl sm:text-2xl font-bold">{selectedStaff.name}</h2>
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${
+                      (selectedStaff.sector || 'kaigo') === 'kaigo' ? 'bg-teal-500/20 text-teal-400' : 'bg-orange-500/20 text-orange-400'
+                    }`}>
+                      {sectorDefinitions[selectedStaff.sector || 'kaigo']?.name}
+                    </span>
+                  </div>
                   <p className="text-slate-400">
                     {getFacilityName(selectedStaff.facility_id)}
                     {selectedStaff.facility_ids?.length > 0 && (
@@ -2180,6 +2252,9 @@ export default function Home() {
                         (+{selectedStaff.facility_ids.filter(id => id !== selectedStaff.facility_id).length}事業所)
                       </span>
                     )}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {sectorDefinitions[selectedStaff.sector || 'kaigo']?.council}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -2445,7 +2520,7 @@ export default function Home() {
                 <h3 className="text-lg font-bold mb-4">✅ チェックリスト</h3>
 
                 <div className="space-y-3">
-                  {Object.entries(checklistDefinitions).map(([phaseKey, phase]) => {
+                  {Object.entries(getChecklistDefinitions(selectedStaff?.sector)).map(([phaseKey, phase]) => {
                     const progress = getPhaseProgress(phaseKey)
                     const isExpanded = expandedPhase === phaseKey
                     const isEditing = editingPhase === phaseKey
@@ -2815,14 +2890,26 @@ export default function Home() {
                     <h3 className="text-lg font-bold">マニュアル</h3>
                     <p className="text-sm text-slate-400 mt-2">アプリの使い方・手続き案内</p>
                   </button>
-                  <button
-                    onClick={() => window.open('https://www.ssw.go.jp/', '_blank')}
-                    className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl hover:border-blue-500/50 transition-all text-left"
-                  >
+                  <div className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl">
                     <div className="text-3xl mb-3">🔗</div>
                     <h3 className="text-lg font-bold">協議会システム</h3>
-                    <p className="text-sm text-slate-400 mt-2">介護分野特定技能協議会へ</p>
-                  </button>
+                    <div className="mt-3 space-y-2">
+                      <button
+                        onClick={() => window.open('https://www.ssw.go.jp/', '_blank')}
+                        className="block w-full text-left px-3 py-2 rounded-lg bg-teal-500/10 border border-teal-500/30 hover:bg-teal-500/20 transition-all"
+                      >
+                        <span className="text-sm text-teal-400">介護分野</span>
+                        <span className="text-xs text-slate-500 block">厚生労働省</span>
+                      </button>
+                      <button
+                        onClick={() => window.open('https://www.maff.go.jp/j/shokusan/sanki/soumu/tokuteigino.html', '_blank')}
+                        className="block w-full text-left px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 hover:bg-orange-500/20 transition-all"
+                      >
+                        <span className="text-sm text-orange-400">外食業分野</span>
+                        <span className="text-xs text-slate-500 block">農林水産省</span>
+                      </button>
+                    </div>
+                  </div>
                   <div className="p-6 bg-slate-800/50 border border-slate-700/50 rounded-2xl">
                     <div className="text-3xl mb-3">📞</div>
                     <h3 className="text-lg font-bold">専門家連絡先</h3>
@@ -3186,6 +3273,21 @@ export default function Home() {
               <h3 className="text-xl font-bold mb-4">スタッフ追加</h3>
               <div className="space-y-4">
                 <div>
+                  <label className="block text-sm text-slate-400 mb-1">分野 *</label>
+                  <select
+                    value={newStaff.sector}
+                    onChange={(e) => setNewStaff(prev => ({ ...prev, sector: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    {Object.entries(sectorDefinitions).map(([key, def]) => (
+                      <option key={key} value={key}>{def.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {sectorDefinitions[newStaff.sector]?.council}（{sectorDefinitions[newStaff.sector]?.ministry}）
+                  </p>
+                </div>
+                <div>
                   <label className="block text-sm text-slate-400 mb-1">氏名 *</label>
                   <input
                     type="text"
@@ -3232,17 +3334,17 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
-                <button 
+                <button
                   onClick={() => {
                     setShowAddStaff(false)
-                    setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '' })
-                  }} 
+                    setNewStaff({ name: '', name_kana: '', nationality: 'ネパール', entry_date: '', facility_id: '', facility_ids: [], sector: 'kaigo' })
+                  }}
                   className="flex-1 px-4 py-3 rounded-lg border border-slate-600 text-slate-400"
                 >
                   キャンセル
                 </button>
-                <button 
-                  onClick={handleAddStaff} 
+                <button
+                  onClick={handleAddStaff}
                   className="flex-1 px-4 py-3 rounded-lg bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-semibold"
                 >
                   追加
@@ -3343,6 +3445,21 @@ export default function Home() {
               <h3 className="text-xl font-bold mb-4">スタッフ情報を編集</h3>
               <div className="space-y-4">
                 <div>
+                  <label className="block text-sm text-slate-400 mb-1">分野</label>
+                  <select
+                    value={editingStaff.sector || 'kaigo'}
+                    onChange={(e) => setEditingStaff(prev => ({ ...prev, sector: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-teal-500 focus:outline-none appearance-none"
+                  >
+                    {Object.entries(sectorDefinitions).map(([key, def]) => (
+                      <option key={key} value={key}>{def.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {sectorDefinitions[editingStaff.sector || 'kaigo']?.council}
+                  </p>
+                </div>
+                <div>
                   <label className="block text-sm text-slate-400 mb-1">氏名 *</label>
                   <input
                     type="text"
@@ -3408,17 +3525,20 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
-                <div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editingStaff.visit_care_ready || false}
-                      onChange={(e) => setEditingStaff(prev => ({ ...prev, visit_care_ready: e.target.checked }))}
-                      className="w-4 h-4 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
-                    />
-                    <span className="text-sm">訪問系サービス対応可</span>
-                  </label>
-                </div>
+                {/* 訪問系サービス対応は介護分野のみ表示 */}
+                {(editingStaff.sector || 'kaigo') === 'kaigo' && (
+                  <div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingStaff.visit_care_ready || false}
+                        onChange={(e) => setEditingStaff(prev => ({ ...prev, visit_care_ready: e.target.checked }))}
+                        className="w-4 h-4 rounded border-slate-600 text-teal-500 focus:ring-teal-500"
+                      />
+                      <span className="text-sm">訪問系サービス対応可</span>
+                    </label>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 mt-6">
                 <button
